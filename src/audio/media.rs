@@ -416,7 +416,7 @@ mod tests {
             };
             let mut frame = [0u8; 27];
             frame[..9].copy_from_slice(&[7, 25, 1, 0x1b, 0x20, 0, 0x98, 0x09, 0]);
-            let in_ear = 8;
+            let in_ear = 2;
             let side = usize::from(!primary_left);
             frame[5] = if primary_left { 0x20 } else { 0 } | in_ear;
             let worn = advertisement::parse(&frame, 1, -50, 1000).unwrap();

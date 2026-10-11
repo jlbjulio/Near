@@ -70,7 +70,7 @@ pub fn parse(bytes: &[u8], address: u64, signal: i16, at: u64) -> Option<Reading
         ];
         let both_case = status & 4 != 0;
         let broadcaster_case = status & 0x40 != 0;
-        let flip = primary_left ^ broadcaster_case;
+        let flip = !primary_left ^ broadcaster_case;
         let dual = matches!(
             id,
             0x2002 | 0x200F | 0x2013 | 0x200E | 0x2014 | 0x2024 | 0x2019 | 0x201B | 0x200B
@@ -142,5 +142,48 @@ mod tests {
         assert_eq!(r.ears, [None; 2]);
         f[3] = 0xff;
         assert!(parse(&f, 1, -50, 0).is_none());
+    }
+    #[test]
+    fn captured_airpods_4_left_primary_frame_reports_the_left_ear() {
+        let mut frame = [0u8; 27];
+        // Public header from the live capture; its private tail is irrelevant to this decoder.
+        frame[..11].copy_from_slice(&[
+            0x07, 0x19, 0x01, 0x1b, 0x20, 0x22, 0xf5, 0x8f, 0x10, 0x00, 0x05,
+        ]);
+        let worn = parse(&frame, 1, -50, 1000).unwrap();
+        assert_eq!(worn.battery[..2], [Some(50), None]);
+        assert_eq!(worn.ears, [Some(true), None]);
+        frame[5] &= !2;
+        assert_eq!(
+            parse(&frame, 1, -50, 1100).unwrap().ears,
+            [Some(false), None]
+        );
+    }
+    #[test]
+    fn primary_ear_uses_bit_one_on_both_physical_sides() {
+        for id in [0x2002u16, 0x2013, 0x200e, 0x2014, 0x2024, 0x2019, 0x201b] {
+            for primary_left in [false, true] {
+                let mut frame = [0u8; 27];
+                frame[..9].copy_from_slice(&[
+                    7,
+                    25,
+                    1,
+                    id as u8,
+                    (id >> 8) as u8,
+                    0,
+                    0xf5,
+                    0x0f,
+                    8,
+                ]);
+                frame[5] = 2 | if primary_left { 0x20 } else { 0 };
+                let r = parse(&frame, 1, -50, 1000).unwrap();
+                assert_eq!(
+                    r.ears[usize::from(!primary_left)],
+                    Some(true),
+                    "model {id:x}"
+                );
+                assert_eq!(r.ears[usize::from(primary_left)], None);
+            }
+        }
     }
 }

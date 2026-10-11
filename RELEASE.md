@@ -1,11 +1,10 @@
-## Near 1.0.2
+## Near 1.0.3
 
 A quiet AirPods companion for Windows, written in Rust.
 
-- Ear detection now ignores expired individual sensor states before pausing or resuming.
-- Regression coverage verifies single-earbud pause and resume, AirPods 4 frame processing, and unchanged audio output while one earbud is still worn.
-- Quitting reliably delivers the shutdown request when the background queue is busy.
-- The executable's Windows version information follows the release version.
+- Fixed reversed left/right ear-sensor decoding that prevented automatic pause on AirPods 4.
+- Added a regression from an actual AirPods 4 broadcast, with coverage for either primary earbud across supported models.
+- Battery order and SteelSeries Sonar routes remain unchanged.
 
 - Battery and charging indicators in a compact tray flyout.
 - A case-opening popup that fades away automatically.
@@ -20,7 +19,7 @@ A quiet AirPods companion for Windows, written in Rust.
 - A movable flyout that opens or focuses when you click the tray icon.
 - Consistent Segoe UI Variable typography on Windows 11, vector playback controls, and a simple English interface.
 
-Download **Near-1.0.2-windows-x64.zip**, extract it, and run **Near.exe**.
+Download **Near-1.0.3-windows-x64.zip**, extract it, and run **Near.exe**.
 
 **Compatibility:** Windows 10 version 2004 or later / Windows 11, x64, with Bluetooth LE. First-time pairing uses Windows Bluetooth settings. AirPods battery broadcasts are approximate, in 10% steps; case readings update while the case broadcasts. Ear sensing varies by model and firmware. AirPods Pro 3 and AirPods Max detection is included; their ear sensing is not advertised as supported. Real-device testing across every model is still outstanding.
 
