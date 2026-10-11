@@ -161,7 +161,8 @@ impl EarAutomation {
             self.source = reading.address;
         }
         let before: [Option<bool>; 2] = std::array::from_fn(|i| {
-            if reading.at.saturating_sub(self.ear_at[i]) < 3_000 {
+            // BLE scanning can miss several seconds between fresh sensor packets.
+            if reading.at.saturating_sub(self.ear_at[i]) < 10_000 {
                 self.previous[i]
             } else {
                 None
@@ -390,12 +391,12 @@ mod tests {
                 true,
                 1000,
             );
-            ears.update_at(&reading(3000, 1, [None; 2]), &mut playback, true, 3000);
+            ears.update_at(&reading(8000, 1, [None; 2]), &mut playback, true, 8000);
             ears.update_at(
-                &reading(4100, 1, [Some(!before), None]),
+                &reading(11100, 1, [Some(!before), None]),
                 &mut playback,
                 true,
-                4100,
+                11100,
             );
             assert!(
                 playback.commands.is_empty(),
@@ -435,5 +436,30 @@ mod tests {
             }
             assert_eq!(playback.commands, ["pause"]);
         }
+    }
+    #[test]
+    fn a_realistic_ble_gap_does_not_hide_single_earbud_removal() {
+        let mut ears = EarAutomation::default();
+        let mut playback = Playback::default();
+        ears.update_at(
+            &reading(1000, 1, [Some(true), None]),
+            &mut playback,
+            true,
+            1000,
+        );
+        ears.update_at(
+            &reading(7393, 1, [Some(false), None]),
+            &mut playback,
+            true,
+            7393,
+        );
+        assert_eq!(playback.commands, ["pause"]);
+        ears.update_at(
+            &reading(8000, 1, [Some(true), None]),
+            &mut playback,
+            true,
+            8000,
+        );
+        assert_eq!(playback.commands, ["pause", "resume"]);
     }
 }

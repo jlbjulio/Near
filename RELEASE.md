@@ -4,6 +4,7 @@ A quiet AirPods companion for Windows, written in Rust.
 
 - Fixed reversed left/right ear-sensor decoding that prevented automatic pause on AirPods 4.
 - Added a regression from an actual AirPods 4 broadcast, with coverage for either primary earbud across supported models.
+- Ear transitions tolerate brief Bluetooth broadcast gaps while still rejecting expired sensor history.
 - Battery order and SteelSeries Sonar routes remain unchanged.
 
 - Battery and charging indicators in a compact tray flyout.
