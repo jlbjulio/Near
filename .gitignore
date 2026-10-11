@@ -1,0 +1,13 @@
+bin/
+obj/
+evidence/
+dist/
+capturas/
+stage/
+*.pdb
+.archive/
+packaging/work/
+
+/target/
+/release/
+*.log
