@@ -439,27 +439,76 @@ mod tests {
     }
     #[test]
     fn a_realistic_ble_gap_does_not_hide_single_earbud_removal() {
-        let mut ears = EarAutomation::default();
-        let mut playback = Playback::default();
-        ears.update_at(
-            &reading(1000, 1, [Some(true), None]),
-            &mut playback,
-            true,
-            1000,
-        );
-        ears.update_at(
-            &reading(7393, 1, [Some(false), None]),
-            &mut playback,
-            true,
-            7393,
-        );
-        assert_eq!(playback.commands, ["pause"]);
-        ears.update_at(
-            &reading(8000, 1, [Some(true), None]),
-            &mut playback,
-            true,
-            8000,
-        );
-        assert_eq!(playback.commands, ["pause", "resume"]);
+        for side in 0..2 {
+            let mut ears = EarAutomation::default();
+            let mut playback = Playback::default();
+            let mut worn = [None; 2];
+            worn[side] = Some(true);
+            let mut removed = worn;
+            removed[side] = Some(false);
+            ears.update_at(&reading(1000, 1, worn), &mut playback, true, 1000);
+            ears.update_at(&reading(7393, 1, removed), &mut playback, true, 7393);
+            assert_eq!(playback.commands, ["pause"]);
+            ears.update_at(&reading(8000, 1, worn), &mut playback, true, 8000);
+            assert_eq!(playback.commands, ["pause", "resume"]);
+        }
+    }
+    #[test]
+    fn alternating_primary_broadcasts_do_not_remove_the_other_ear() {
+        for primary_left in [false, true] {
+            let mut ears = EarAutomation::default();
+            let mut playback = Playback::default();
+            let frame = |left: bool, worn: bool, at| {
+                let mut bytes = [0u8; 27];
+                bytes[..9].copy_from_slice(&[
+                    7,
+                    25,
+                    1,
+                    0x1b,
+                    0x20,
+                    if left { 0x20 } else { 0 } | if worn { 2 } else { 0 },
+                    if left { 0x38 } else { 0x83 },
+                    6,
+                    8,
+                ]);
+                crate::bluetooth::advertisement::parse(&bytes, 1, -50, at).unwrap()
+            };
+            ears.update_at(&frame(primary_left, true, 1000), &mut playback, true, 1000);
+            assert_eq!(
+                ears.update_at(&frame(!primary_left, true, 1100), &mut playback, true, 1100),
+                Some([Some(true); 2])
+            );
+            assert!(playback.commands.is_empty());
+            let state = ears
+                .update_at(&frame(primary_left, false, 1200), &mut playback, true, 1200)
+                .unwrap();
+            assert_eq!(state[usize::from(!primary_left)], Some(false));
+            assert_eq!(state[usize::from(primary_left)], Some(true));
+            assert_eq!(playback.commands, ["pause"]);
+            ears.update_at(&frame(!primary_left, true, 1300), &mut playback, true, 1300);
+            assert_eq!(playback.commands, ["pause"]);
+            ears.update_at(&frame(primary_left, true, 1400), &mut playback, true, 1400);
+            assert_eq!(playback.commands, ["pause", "resume"]);
+        }
+    }
+    #[test]
+    fn reenabling_detection_does_not_resume_or_pause_from_the_previous_setting() {
+        for side in 0..2 {
+            let mut ears = EarAutomation::default();
+            let mut playback = Playback::default();
+            let mut worn = [None; 2];
+            worn[side] = Some(true);
+            let mut removed = worn;
+            removed[side] = Some(false);
+            ears.update_at(&reading(1000, 1, worn), &mut playback, true, 1000);
+            ears.reset(&mut playback);
+            ears.update_at(&reading(1100, 1, removed), &mut playback, false, 1100);
+            ears.reset(&mut playback);
+            ears.update_at(&reading(1200, 1, worn), &mut playback, true, 1200);
+            assert!(playback.commands.is_empty());
+            ears.update_at(&reading(1300, 1, removed), &mut playback, true, 1300);
+            ears.update_at(&reading(1400, 1, worn), &mut playback, true, 1400);
+            assert_eq!(playback.commands, ["pause", "resume"]);
+        }
     }
 }

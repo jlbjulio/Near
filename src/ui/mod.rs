@@ -662,9 +662,9 @@ impl App {
                         .nth(index as usize - 1)
                         .map(|e| e.id.clone())
                 };
-                let mut p = self.vm.preferences.clone();
-                p.speakers_id = value;
-                self.send(Command::Preferences(p));
+                let change = PreferenceChange::Speakers(value);
+                self.vm.preferences.apply(change.clone());
+                self.send(Command::Preferences(change));
             }
             return;
         }
@@ -711,16 +711,15 @@ impl App {
                 let _ = InvalidateRect(Some(self.control(30)), None, false);
             }
             31..=35 => {
-                let mut p = self.vm.preferences.clone();
-                match id {
-                    31 => p.popup = !p.popup,
-                    32 => p.motion = !p.motion,
-                    33 => p.low_battery = !p.low_battery,
-                    34 => p.ear_detection = !p.ear_detection,
-                    _ => p.speaker_switch = !p.speaker_switch,
+                let change = match id {
+                    31 => PreferenceChange::TogglePopup,
+                    32 => PreferenceChange::ToggleMotion,
+                    33 => PreferenceChange::ToggleLowBattery,
+                    34 => PreferenceChange::ToggleEarDetection,
+                    _ => PreferenceChange::ToggleSpeakerSwitch,
                 };
-                self.vm.preferences = p.clone();
-                self.send(Command::Preferences(p));
+                self.vm.preferences.apply(change.clone());
+                self.send(Command::Preferences(change));
                 let _ = InvalidateRect(Some(self.control(id)), None, false);
             }
             53 => self.send(Command::Refresh),

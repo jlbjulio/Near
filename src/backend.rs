@@ -105,11 +105,19 @@ pub fn run(
                     ears.reset(&mut transport);
                     router.reset();
                 }
-                Event::Command(Command::Preferences(p)) => {
-                    prefs = p;
-                    let _ = prefs.save();
-                    if !prefs.ear_detection {
-                        transport.reset();
+                Event::Command(Command::Preferences(change)) => {
+                    let previous_detection = prefs.ear_detection;
+                    let mut updated = prefs.clone();
+                    updated.apply(change);
+                    if let Err(e) = updated.save() {
+                        crate::shell::log(&e.to_string());
+                        message = "Couldn’t save settings.".into();
+                        message_until = t + 30_000;
+                        continue;
+                    }
+                    prefs = updated;
+                    if prefs.ear_detection != previous_detection {
+                        ears.reset(&mut transport);
                     }
                     if !prefs.speaker_switch {
                         router.reset();

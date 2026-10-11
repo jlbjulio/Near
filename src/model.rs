@@ -33,6 +33,15 @@ pub struct Preferences {
     pub speakers_id: Option<String>,
     pub disconnected_addresses: Vec<u64>,
 }
+#[derive(Clone, Debug)]
+pub enum PreferenceChange {
+    TogglePopup,
+    ToggleMotion,
+    ToggleLowBattery,
+    ToggleEarDetection,
+    ToggleSpeakerSwitch,
+    Speakers(Option<String>),
+}
 impl Default for Preferences {
     fn default() -> Self {
         Self {
@@ -48,6 +57,16 @@ impl Default for Preferences {
     }
 }
 impl Preferences {
+    pub fn apply(&mut self, change: PreferenceChange) {
+        match change {
+            PreferenceChange::TogglePopup => self.popup = !self.popup,
+            PreferenceChange::ToggleMotion => self.motion = !self.motion,
+            PreferenceChange::ToggleLowBattery => self.low_battery = !self.low_battery,
+            PreferenceChange::ToggleEarDetection => self.ear_detection = !self.ear_detection,
+            PreferenceChange::ToggleSpeakerSwitch => self.speaker_switch = !self.speaker_switch,
+            PreferenceChange::Speakers(value) => self.speakers_id = value,
+        }
+    }
     pub fn load() -> Self {
         std::fs::read(data_dir().join("settings.json"))
             .ok()
@@ -246,7 +265,7 @@ pub enum Command {
     Disconnect,
     Select(u64),
     Media(&'static str),
-    Preferences(Preferences),
+    Preferences(PreferenceChange),
     Refresh,
     Restart,
     Quit,
@@ -260,6 +279,73 @@ pub enum Event {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn all_settings_combinations_round_trip_without_changing_device_choices() {
+        for mask in 0..32 {
+            let p = Preferences {
+                popup: mask & 1 != 0,
+                motion: mask & 2 != 0,
+                low_battery: mask & 4 != 0,
+                ear_detection: mask & 8 != 0,
+                speaker_switch: mask & 16 != 0,
+                preferred_address: 123,
+                speakers_id: Some("Speakers \"Desk\" · USB".into()),
+                disconnected_addresses: vec![123, 456],
+            };
+            let reloaded: Preferences =
+                serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
+            assert_eq!(reloaded, p, "settings mask {mask}");
+        }
+    }
+    #[test]
+    fn delayed_setting_commands_preserve_other_changes_and_manual_disconnects() {
+        let mut p = Preferences {
+            preferred_address: 456,
+            disconnected_addresses: vec![123, 456],
+            ..Default::default()
+        };
+        p.apply(PreferenceChange::Speakers(Some("desk".into())));
+        p.apply(PreferenceChange::ToggleEarDetection);
+        p.apply(PreferenceChange::TogglePopup);
+        p.apply(PreferenceChange::ToggleMotion);
+        p.apply(PreferenceChange::ToggleLowBattery);
+        p.apply(PreferenceChange::ToggleSpeakerSwitch);
+        assert_eq!(
+            p,
+            Preferences {
+                popup: false,
+                motion: false,
+                low_battery: false,
+                ear_detection: false,
+                speaker_switch: false,
+                preferred_address: 456,
+                speakers_id: Some("desk".into()),
+                disconnected_addresses: vec![123, 456],
+            }
+        );
+        p.apply(PreferenceChange::ToggleEarDetection);
+        assert!(p.ear_detection);
+        assert!(!p.popup && !p.motion && !p.low_battery && !p.speaker_switch);
+        p.apply(PreferenceChange::Speakers(None));
+        assert_eq!(p.speakers_id, None);
+        assert_eq!(p.preferred_address, 456);
+        assert_eq!(p.disconnected_addresses, [123, 456]);
+    }
+    #[test]
+    fn two_toggle_clicks_from_the_same_ui_snapshot_restore_the_setting() {
+        let mut current = Preferences::default();
+        for change in [
+            PreferenceChange::TogglePopup,
+            PreferenceChange::ToggleMotion,
+            PreferenceChange::ToggleLowBattery,
+            PreferenceChange::ToggleEarDetection,
+            PreferenceChange::ToggleSpeakerSwitch,
+        ] {
+            current.apply(change.clone());
+            current.apply(change);
+            assert_eq!(current, Preferences::default());
+        }
+    }
     #[test]
     fn charging_expires_before_the_cached_battery() {
         let mut b = Batteries {

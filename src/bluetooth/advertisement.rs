@@ -110,6 +110,144 @@ pub fn parse(bytes: &[u8], address: u64, signal: i16, at: u64) -> Option<Reading
 mod tests {
     use super::*;
     #[test]
+    fn physical_battery_and_charging_sides_survive_primary_switches() {
+        for id in [
+            0x2002u16, 0x200f, 0x2013, 0x200e, 0x2014, 0x2024, 0x2019, 0x201b,
+        ] {
+            for physical_flags in 0..8u8 {
+                let mut batteries = crate::model::Batteries::default();
+                for (status, levels, wire_flags) in [
+                    (0x24, 0x38, physical_flags),
+                    (
+                        0x04,
+                        0x83,
+                        [0, 2, 1, 3, 4, 6, 5, 7][physical_flags as usize],
+                    ),
+                ] {
+                    let mut frame = [0u8; 27];
+                    frame[..9].copy_from_slice(&[
+                        7,
+                        25,
+                        1,
+                        id as u8,
+                        (id >> 8) as u8,
+                        status,
+                        levels,
+                        (wire_flags << 4) | 6,
+                        0,
+                    ]);
+                    let reading = parse(&frame, 1, -50, 1000).unwrap();
+                    assert_eq!(reading.battery, [Some(80), Some(30), Some(60)]);
+                    assert_eq!(
+                        reading.charging,
+                        [
+                            Some(physical_flags & 1 != 0),
+                            Some(physical_flags & 2 != 0),
+                            Some(physical_flags & 4 != 0),
+                        ]
+                    );
+                    batteries.remember(&reading);
+                    assert_eq!(batteries.value(0), "≈80%");
+                    assert_eq!(batteries.value(1), "≈30%");
+                    assert_eq!(batteries.value(2), "≈60%");
+                    assert_eq!(batteries.tray_level(), Some(30));
+                }
+            }
+        }
+    }
+    #[test]
+    fn case_and_primary_bits_do_not_reverse_the_ear_sensors() {
+        for id in [0x2002u16, 0x200f, 0x2013, 0x200e] {
+            for (base, left_bit, right_bit) in
+                [(0x00, 8, 2), (0x20, 2, 8), (0x40, 2, 8), (0x60, 8, 2)]
+            {
+                for ear_bits in [0, 2, 8, 10] {
+                    for both_case in [0, 4] {
+                        let mut frame = [0u8; 27];
+                        frame[..9].copy_from_slice(&[
+                            7,
+                            25,
+                            1,
+                            id as u8,
+                            (id >> 8) as u8,
+                            base | ear_bits | both_case,
+                            0x38,
+                            6,
+                            0,
+                        ]);
+                        let reading = parse(&frame, 1, -50, 1000).unwrap();
+                        assert_eq!(
+                            reading.ears,
+                            [
+                                Some(both_case == 0 && ear_bits & left_bit != 0),
+                                Some(both_case == 0 && ear_bits & right_bit != 0),
+                            ],
+                            "model {id:x}, status {:x}",
+                            frame[5]
+                        );
+                    }
+                }
+            }
+        }
+    }
+    #[test]
+    fn h2_secondary_sensors_remain_unknown_until_a_reliable_case_frame() {
+        for id in [0x2014u16, 0x2024, 0x2019, 0x201b] {
+            for (status, expected) in [
+                (0x02, [None, Some(true)]),
+                (0x22, [Some(true), None]),
+                (0x00, [None, Some(false)]),
+                (0x20, [Some(false), None]),
+                (0x04, [Some(false), Some(false)]),
+                (0x24, [Some(false), Some(false)]),
+            ] {
+                let mut frame = [0u8; 27];
+                frame[..9].copy_from_slice(&[
+                    7,
+                    25,
+                    1,
+                    id as u8,
+                    (id >> 8) as u8,
+                    status,
+                    0x38,
+                    6,
+                    0,
+                ]);
+                assert_eq!(parse(&frame, 1, -50, 1000).unwrap().ears, expected);
+            }
+        }
+    }
+    #[test]
+    fn unknown_battery_sides_never_invent_charge_or_ear_states() {
+        for unknown in 11..16u8 {
+            for primary_left in [false, true] {
+                let mut frame = [0u8; 27];
+                frame[..9].copy_from_slice(&[
+                    7,
+                    25,
+                    1,
+                    0x1b,
+                    0x20,
+                    if primary_left { 0x22 } else { 0x02 },
+                    (unknown << 4) | 7,
+                    0x7f,
+                    8,
+                ]);
+                let reading = parse(&frame, 1, -50, 1000).unwrap();
+                let known = usize::from(!primary_left);
+                let missing = 1 - known;
+                assert_eq!(reading.battery[known], Some(70));
+                assert_eq!(reading.charging[known], Some(true));
+                assert_eq!(reading.ears[known], Some(true));
+                assert_eq!(reading.battery[missing], None);
+                assert_eq!(reading.charging[missing], None);
+                assert_eq!(reading.ears[missing], None);
+                assert_eq!(reading.battery[2], None);
+                assert_eq!(reading.charging[2], None);
+            }
+        }
+    }
+    #[test]
     fn truncation_never_reads_outside_the_frame() {
         let frame = [
             7, 25, 1, 0x1b, 0x20, 0x24, 0x98, 0x79, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
