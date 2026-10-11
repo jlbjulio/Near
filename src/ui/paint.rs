@@ -393,6 +393,7 @@ mod tests {
                     "Last known battery · open your case to update.",
                     "Couldn’t connect. Open the case and try again.",
                     "Couldn’t disconnect. Try Bluetooth settings.",
+                    "Low battery · Left ≈10% · Right ≈10% · Case ≈10%",
                     "Pair your headphones in Bluetooth settings first.",
                 ] {
                     let mut value: Vec<u16> = text.encode_utf16().collect();

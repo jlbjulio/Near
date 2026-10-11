@@ -52,7 +52,7 @@ fn preview_model(state: Option<&str>) -> ViewModel {
     vm.state = "Nearby".into();
     vm.available = true;
     match state {
-        Some("connected") => {
+        Some("connected" | "low-battery") => {
             vm.chosen.as_mut().unwrap().connected = true;
             vm.state = "Connected".into();
             vm.note = "Estimated battery · updates nearby.".into();
@@ -64,6 +64,17 @@ fn preview_model(state: Option<&str>) -> ViewModel {
                     charging: Some(true),
                 })
             });
+            if state == Some("low-battery") {
+                vm.batteries.parts = [10, 10, 80].map(|level| {
+                    Some(Sample {
+                        level,
+                        at: now(),
+                        charging: Some(false),
+                    })
+                });
+                vm.alert = "Left ≈10% · Right ≈10%".into();
+                vm.alert_revision = 1;
+            }
         }
         Some("disconnected") => {
             vm.available = false;
@@ -119,6 +130,7 @@ struct App {
     moved: bool,
     popup_revision: u64,
     alert_revision: u64,
+    battery_notice_until: u64,
     preview: bool,
     preview_file: Option<String>,
     taskbar_created: u32,
@@ -177,6 +189,7 @@ pub fn run(
             moved: false,
             popup_revision: 0,
             alert_revision: 0,
+            battery_notice_until: 0,
             preview,
             preview_file,
             taskbar_created: RegisterWindowMessageW(w!("TaskbarCreated")),
@@ -235,7 +248,7 @@ pub fn run(
                         .map_err(|_| windows::core::Error::from_thread())?,
                 );
             }
-            if open {
+            if open && !(preview && preview_state.as_deref() == Some("low-battery")) {
                 app.show(false);
             }
             if preview {
@@ -294,6 +307,11 @@ unsafe extern "system" fn window_proc(
         return DefWindowProcW(hwnd, message, wparam, lparam);
     };
     match message {
+        WM_TIMER if wparam.0 == 3 => {
+            let _ = KillTimer(Some(hwnd), 3);
+            let _ = InvalidateRect(Some(hwnd), None, false);
+            LRESULT(0)
+        }
         WM_PAINT => {
             app.paint();
             LRESULT(0)
@@ -462,7 +480,7 @@ impl App {
             (30, "Start with Windows", 96.),
             (31, "Case popup", 130.),
             (32, "Animations", 164.),
-            (33, "Low battery alerts", 198.),
+            (33, "Low battery popup", 198.),
             (34, "Automatic pause", 232.),
             (35, "Automatic switching", 266.),
         ] {
@@ -528,9 +546,19 @@ impl App {
         }
         if let Some(tray) = &mut self.tray {
             tray.update(&self.vm);
-            if self.vm.alert_revision != self.alert_revision {
-                self.alert_revision = self.vm.alert_revision;
-                tray.alert(&self.vm.alert);
+        }
+        if self.vm.alert_revision != self.alert_revision {
+            self.alert_revision = self.vm.alert_revision;
+            if self.vm.preferences.low_battery && !self.vm.alert.is_empty() {
+                self.battery_notice_until = now() + 8000;
+                SetTimer(Some(self.hwnd), 3, 8000, None);
+                if !IsWindowVisible(self.hwnd).as_bool() {
+                    self.page = 0;
+                    self.layout();
+                    self.show(true);
+                } else if self.automatic {
+                    self.dismiss_at = self.battery_notice_until;
+                }
             }
         }
         if self.vm.popup_revision != self.popup_revision {
@@ -1094,10 +1122,13 @@ impl App {
                     }
                 }
             }
-            let helper = if self.vm.message.is_empty() || self.vm.message == "Connecting…" {
-                &self.vm.note
-            } else {
+            let warning = format!("Low battery · {}", self.vm.alert);
+            let helper = if !self.vm.message.is_empty() && self.vm.message != "Connecting…" {
                 &self.vm.message
+            } else if self.vm.preferences.low_battery && now() < self.battery_notice_until {
+                &warning
+            } else {
+                &self.vm.note
             };
             c.wrapped(helper, [20., 208., 280., 36.], normal, MUTED);
             let media_title = if self.vm.media.title.is_empty() {

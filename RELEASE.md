@@ -1,13 +1,14 @@
-## Near 1.0.4
+## Near 1.0.5
 
 A quiet AirPods companion for Windows, written in Rust.
 
-- Settings update independently, preserving recent changes, selected headphones, speaker choice, and manual disconnections.
-- Rapid switch clicks are processed in order without overwriting other settings.
-- Enabling or disabling automatic pause clears the previous sensor baseline to avoid commands from an earlier setting.
-- Failed settings saves show a message and retain the previous configuration.
-- Expanded left/right battery, charging, case, primary-earbud, and single-earbud regression coverage.
-- Includes the AirPods 4 ear-sensor and Bluetooth broadcast gap fixes from 1.0.3.
+- A silent low battery flyout appears at 10%, using fresh observations.
+- The warning fades away without taking focus from your current app.
+- Removed the 20% reminder and Windows battery notifications. The AirPods' built-in sound is unchanged.
+- Left, right, and case warnings are grouped so one does not overwrite another.
+- Charging and recovered batteries rearm alerts; missing or old readings do not trigger them.
+- Re-enabling battery alerts works immediately with a fresh low reading.
+- Existing settings, ear-sensor fixes, and Sonar audio routing are preserved.
 
 - Battery and charging indicators in a compact tray flyout.
 - A case-opening popup that fades away automatically.
@@ -22,7 +23,7 @@ A quiet AirPods companion for Windows, written in Rust.
 - A movable flyout that opens or focuses when you click the tray icon.
 - Consistent Segoe UI Variable typography on Windows 11, vector playback controls, and a simple English interface.
 
-Download **Near-1.0.4-windows-x64.zip**, extract it, and run **Near.exe**.
+Download **Near-1.0.5-windows-x64.zip**, extract it, and run **Near.exe**.
 
 **Compatibility:** Windows 10 version 2004 or later / Windows 11, x64, with Bluetooth LE. First-time pairing uses Windows Bluetooth settings. AirPods battery broadcasts are approximate, in 10% steps; case readings update while the case broadcasts. Ear sensing varies by model and firmware. AirPods Pro 3 and AirPods Max detection is included; their ear sensing is not advertised as supported. Real-device testing across every model is still outstanding.
 

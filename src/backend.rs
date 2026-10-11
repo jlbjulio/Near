@@ -32,7 +32,7 @@ pub fn run(
     let mut selected_batteries = Batteries::default();
     let mut auto_connect = crate::connection::AutoConnect::default();
     let mut lids: HashMap<u64, (bool, u64)> = HashMap::new();
-    let mut alerts = HashSet::new();
+    let mut alerts = crate::alerts::LowBattery::default();
     let mut paired = vec![];
     let mut endpoints = vec![];
     let mut chosen: Option<Paired> = None;
@@ -415,35 +415,19 @@ pub fn run(
             .or_else(|| source.as_ref().map(|r| r.name.clone()))
             .unwrap_or_else(|| "AirPods".into());
         let batteries = selected_batteries.clone();
-        if prefs.low_battery {
-            for (i, part) in batteries.parts.iter().enumerate() {
-                if let Some(s) = part {
-                    let key = (
-                        chosen
-                            .as_ref()
-                            .map(|p| p.address)
-                            .or_else(|| source.as_ref().map(|r| r.address))
-                            .unwrap_or(0),
-                        i,
-                    );
-                    if s.level >= 30 || s.charging == Some(true) {
-                        alerts.remove(&key);
-                    } else if s.level <= 20 && t.saturating_sub(s.at) < 15_000 && alerts.insert(key)
-                    {
-                        alert = format!(
-                            "{} · {}: {}{}%",
-                            name,
-                            ["Left", "Right", "Case"][i],
-                            if batteries.approximate { "about " } else { "" },
-                            s.level
-                        );
-                        alert_revision += 1;
-                    }
-                }
+        if let Some(p) = chosen.as_ref().filter(|_| !selection.uncertain) {
+            if let Some(notice) = alerts.update(
+                p.address,
+                &batteries,
+                prefs.low_battery,
+                advertisement::is_max(p.model.unwrap_or(0)),
+                t,
+            ) {
+                alert = notice;
+                alert_revision += 1;
             }
-            if alerts.len() > 96 {
-                alerts.clear();
-            }
+        } else if !prefs.low_battery || chosen.is_none() {
+            alerts.reset();
         }
         if prefs.popup
             && t.saturating_sub(last_popup) > 12_000

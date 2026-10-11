@@ -75,20 +75,6 @@ impl Tray {
         self.tip = tip;
         let _ = Shell_NotifyIconW(NIM_MODIFY, &self.data);
     }
-    pub unsafe fn alert(&mut self, message: &str) {
-        self.data.szInfo.fill(0);
-        self.data.szInfoTitle.fill(0);
-        for (i, c) in message.encode_utf16().take(255).enumerate() {
-            self.data.szInfo[i] = c;
-        }
-        for (i, c) in "Low battery".encode_utf16().enumerate() {
-            self.data.szInfoTitle[i] = c;
-        }
-        self.data.dwInfoFlags = NIIF_WARNING;
-        self.data.uFlags |= NIF_INFO;
-        let _ = Shell_NotifyIconW(NIM_MODIFY, &self.data);
-        self.data.uFlags &= !NIF_INFO;
-    }
     pub unsafe fn anchor(&self) -> Option<RECT> {
         let identifier = NOTIFYICONIDENTIFIER {
             cbSize: std::mem::size_of::<NOTIFYICONIDENTIFIER>() as u32,

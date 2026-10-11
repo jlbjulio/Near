@@ -14,7 +14,7 @@ Your AirPods, right here on Windows. A small, free companion that lives in your 
 - **Automatic pause.** Pause when you remove an earbud; resume playback Near paused when you put it back.
 - **Audio that follows your setup.** Automatic switching for directly selected AirPods. SteelSeries Sonar and other virtual mixers keep control of their routes.
 - **Simple playback controls.** Play, pause, and skip without opening your music app.
-- **Low battery alerts.** A reminder at 20%, with no repeated notifications for the same low battery.
+- **Low battery popup.** A brief, silent reminder at 10%, once until the battery charges or recovers.
 - **Ready at startup.** Enable Start with Windows once and leave Near in the tray.
 
 No account, subscription, background web browser, or custom driver. Everything stays on your PC.
@@ -36,6 +36,8 @@ Near respects your selected Windows output and microphone. With automatic switch
 **Windows 10 (2004+) or Windows 11, x64, with Bluetooth LE.** Detection includes AirPods 1–4, AirPods Pro 1–3, and both AirPods Max variants. Some Beats, Galaxy Buds, and headphones with a standard Bluetooth battery service are also recognized. Availability depends on your adapter, firmware, and the information your headphones broadcast; every model has not been tested with physical hardware.
 
 AirPods battery broadcasts use **10% steps**, so Near shows **≈** rather than pretending to know an exact iPhone percentage. A closed case may stop broadcasting: Near keeps the last reading for up to ten minutes and marks it as old. Charging indicators expire when updates stop.
+
+Near's low battery reminder is visual only. It fades away without taking focus from your current app. Your AirPods keep their own built-in battery sound.
 
 Automatic pause supports using one or both earbuds when usable ear-sensor broadcasts are available. Near resumes only the same track it paused, within one minute. Ear sensing and switching can be limited on newer firmware; AirPods Max and AirPods Pro 3 currently provide detection and battery without an ear-sensing guarantee. If several identical AirPods are nearby, Near avoids guessing which sensor data belongs to you.
 
