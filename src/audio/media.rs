@@ -108,6 +108,22 @@ impl Transport {
         }
     }
 }
+pub trait EarPlayback {
+    fn reset(&mut self);
+    fn automatic_pause(&mut self);
+    fn automatic_resume(&mut self);
+}
+impl EarPlayback for Transport {
+    fn reset(&mut self) {
+        Transport::reset(self);
+    }
+    fn automatic_pause(&mut self) {
+        Transport::automatic_pause(self);
+    }
+    fn automatic_resume(&mut self) {
+        Transport::automatic_resume(self);
+    }
+}
 #[derive(Default)]
 pub struct EarAutomation {
     source: u64,
@@ -116,7 +132,7 @@ pub struct EarAutomation {
     ear_at: [u64; 2],
 }
 impl EarAutomation {
-    pub fn reset(&mut self, transport: &mut Transport) {
+    pub fn reset(&mut self, transport: &mut impl EarPlayback) {
         *self = Self::default();
         transport.reset();
     }
@@ -131,7 +147,7 @@ impl EarAutomation {
     fn update_at(
         &mut self,
         reading: &crate::model::Reading,
-        transport: &mut Transport,
+        transport: &mut impl EarPlayback,
         pause: bool,
         clock: u64,
     ) -> Option<[Option<bool>; 2]> {
@@ -144,7 +160,13 @@ impl EarAutomation {
             self.reset(transport);
             self.source = reading.address;
         }
-        let before = self.previous;
+        let before: [Option<bool>; 2] = std::array::from_fn(|i| {
+            if reading.at.saturating_sub(self.ear_at[i]) < 3_000 {
+                self.previous[i]
+            } else {
+                None
+            }
+        });
         let baseline = self.last == 0;
         self.last = reading.at;
         for i in 0..2 {
@@ -176,6 +198,19 @@ impl EarAutomation {
 mod tests {
     use super::*;
     use crate::model::Reading;
+    #[derive(Default)]
+    struct Playback {
+        commands: Vec<&'static str>,
+    }
+    impl EarPlayback for Playback {
+        fn reset(&mut self) {}
+        fn automatic_pause(&mut self) {
+            self.commands.push("pause");
+        }
+        fn automatic_resume(&mut self) {
+            self.commands.push("resume");
+        }
+    }
     fn reading(at: u64, address: u64, ears: [Option<bool>; 2]) -> Reading {
         Reading {
             address,
@@ -303,5 +338,102 @@ mod tests {
             ),
             Some([Some(false), None])
         );
+    }
+    #[test]
+    fn either_single_earbud_pauses_and_resumes_without_the_other_sensor() {
+        for side in 0..2 {
+            let mut ears = EarAutomation::default();
+            let mut playback = Playback::default();
+            let mut worn = [None; 2];
+            worn[side] = Some(true);
+            ears.update_at(&reading(1000, 1, worn), &mut playback, true, 1000);
+            assert!(playback.commands.is_empty());
+            let mut removed = worn;
+            removed[side] = Some(false);
+            ears.update_at(&reading(1100, 1, removed), &mut playback, true, 1100);
+            assert_eq!(playback.commands, ["pause"]);
+            ears.update_at(&reading(1200, 1, worn), &mut playback, true, 1200);
+            assert_eq!(playback.commands, ["pause", "resume"]);
+        }
+    }
+    #[test]
+    fn missing_sensor_data_and_disabled_detection_send_no_playback_commands() {
+        for enabled in [false, true] {
+            let mut ears = EarAutomation::default();
+            let mut playback = Playback::default();
+            ears.update_at(
+                &reading(1000, 1, [Some(true), None]),
+                &mut playback,
+                enabled,
+                1000,
+            );
+            ears.update_at(&reading(1100, 1, [None; 2]), &mut playback, enabled, 1100);
+            if !enabled {
+                ears.update_at(
+                    &reading(1200, 1, [Some(false), None]),
+                    &mut playback,
+                    enabled,
+                    1200,
+                );
+            }
+            assert!(playback.commands.is_empty());
+        }
+    }
+    #[test]
+    fn expired_individual_sensors_do_not_trigger_playback() {
+        for before in [false, true] {
+            let mut ears = EarAutomation::default();
+            let mut playback = Playback::default();
+            ears.update_at(
+                &reading(1000, 1, [Some(before), None]),
+                &mut playback,
+                true,
+                1000,
+            );
+            ears.update_at(&reading(3000, 1, [None; 2]), &mut playback, true, 3000);
+            ears.update_at(
+                &reading(4100, 1, [Some(!before), None]),
+                &mut playback,
+                true,
+                4100,
+            );
+            assert!(
+                playback.commands.is_empty(),
+                "expired sensor triggered {:?}",
+                playback.commands
+            );
+        }
+    }
+    #[test]
+    fn airpods_4_single_sensor_frames_reach_playback_automation() {
+        use crate::bluetooth::{advertisement, selection};
+        use crate::model::Paired;
+        for primary_left in [false, true] {
+            let paired = Paired {
+                address: 1,
+                model: Some(0x201b),
+                ..Default::default()
+            };
+            let mut frame = [0u8; 27];
+            frame[..9].copy_from_slice(&[7, 25, 1, 0x1b, 0x20, 0, 0x98, 0x09, 0]);
+            let in_ear = 8;
+            let side = usize::from(!primary_left);
+            frame[5] = if primary_left { 0x20 } else { 0 } | in_ear;
+            let worn = advertisement::parse(&frame, 1, -50, 1000).unwrap();
+            assert_eq!(worn.ears[side], Some(true));
+            assert_eq!(worn.ears[1 - side], None);
+            frame[5] &= !in_ear;
+            let removed = advertisement::parse(&frame, 1, -50, 1100).unwrap();
+            assert_eq!(removed.ears[side], Some(false));
+            let mut ears = EarAutomation::default();
+            let mut playback = Playback::default();
+            for r in [worn, removed] {
+                let selected = selection::select(Some(&paired), &[r]);
+                assert!(selected.sensor_reliable);
+                let reading = selected.reading.unwrap();
+                ears.update_at(&reading, &mut playback, true, reading.at);
+            }
+            assert_eq!(playback.commands, ["pause"]);
+        }
     }
 }

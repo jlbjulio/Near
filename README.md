@@ -37,7 +37,7 @@ Near respects your selected Windows output and microphone. With automatic switch
 
 AirPods battery broadcasts use **10% steps**, so Near shows **≈** rather than pretending to know an exact iPhone percentage. A closed case may stop broadcasting: Near keeps the last reading for up to ten minutes and marks it as old. Charging indicators expire when updates stop.
 
-Automatic pause and switching when earbuds are removed require usable ear-sensor broadcasts. They can be limited on newer firmware; AirPods Max and AirPods Pro 3 currently provide detection and battery without an ear-sensing guarantee. If several identical AirPods are nearby, Near avoids guessing which sensor data belongs to you.
+Automatic pause supports using one or both earbuds when usable ear-sensor broadcasts are available. Near resumes only the same track it paused, within one minute. Ear sensing and switching can be limited on newer firmware; AirPods Max and AirPods Pro 3 currently provide detection and battery without an ear-sensing guarantee. If several identical AirPods are nearby, Near avoids guessing which sensor data belongs to you.
 
 Pairing on your iPhone does not pair Windows. After the first Windows pairing, reconnecting does **not** require repeating the white-light setup. A device busy with your phone may need to be disconnected there first.
 

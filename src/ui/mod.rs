@@ -249,7 +249,7 @@ pub fn run(
                 DispatchMessageW(&message);
             }
         }
-        let _ = cell.borrow().tx.try_send(Event::Command(Command::Quit));
+        let _ = cell.borrow().tx.send(Event::Command(Command::Quit));
         if let Some(thread) = backend_thread {
             let _ = thread.join();
         }

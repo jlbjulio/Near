@@ -334,6 +334,31 @@ mod tests {
         assert!(routes.writes.is_empty());
     }
     #[test]
+    fn one_worn_earbud_or_an_unknown_sensor_keeps_the_airpods_output() {
+        let (paired, outputs, _, mut routes) = fixture();
+        routes
+            .defaults
+            .insert((eRender.0, eConsole.0), "pods".into());
+        let mut router = Router::default();
+        for state in [
+            [Some(true), Some(false)],
+            [Some(false), Some(true)],
+            [None, Some(false)],
+            [Some(false), None],
+            [None; 2],
+        ] {
+            router.update_with(state, &paired, &outputs, None, &mut routes);
+            assert_eq!(routes.current(eRender, eConsole).as_deref(), Some("pods"));
+            assert!(routes.writes.is_empty());
+        }
+        router.update_with([Some(false); 2], &paired, &outputs, None, &mut routes);
+        assert_eq!(
+            routes.current(eRender, eConsole).as_deref(),
+            Some("speakers")
+        );
+        assert_eq!(routes.writes.len(), 1);
+    }
+    #[test]
     fn direct_airpods_switch_to_physical_speakers_and_restore_only_owned_routes() {
         let (paired, outputs, _, mut routes) = fixture();
         routes
