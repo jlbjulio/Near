@@ -3,6 +3,7 @@
 mod audio;
 mod backend;
 mod bluetooth;
+mod connection;
 mod model;
 mod shell;
 mod ui;
@@ -69,7 +70,10 @@ fn run() -> windows::core::Result<()> {
         let result = ui::run(
             args.is_empty() || args.iter().any(|s| s == "--open") || preview,
             preview,
-            args.get(1).cloned(),
+            args.get(1).filter(|arg| !arg.starts_with("--")).cloned(),
+            args.iter()
+                .find_map(|arg| arg.strip_prefix("--preview-state="))
+                .map(String::from),
         );
         let _ = CloseHandle(mutex);
         result

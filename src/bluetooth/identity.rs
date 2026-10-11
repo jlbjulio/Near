@@ -58,6 +58,7 @@ pub fn catalog() -> Vec<Paired> {
                     address,
                     name,
                     connected: info.fConnected.as_bool(),
+                    available: info.fConnected.as_bool(),
                     model,
                     container,
                 });

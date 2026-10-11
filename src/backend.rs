@@ -29,7 +29,8 @@ pub fn run(
         .unwrap_or_default();
     let mut scanner = bluetooth::Scanner::start(tx.clone()).ok();
     let mut nearby: HashMap<u64, Reading> = HashMap::new();
-    let mut history: History = HashMap::new();
+    let mut selected_batteries = Batteries::default();
+    let mut auto_connect = crate::connection::AutoConnect::default();
     let mut lids: HashMap<u64, (bool, u64)> = HashMap::new();
     let mut alerts = HashSet::new();
     let mut paired = vec![];
@@ -54,7 +55,10 @@ pub fn run(
     let mut alert = String::new();
     let mut message = String::new();
     let mut connect_until = 0;
+    let mut disconnect_until = 0;
+    let mut message_until = 0;
     let mut connection_routes: Option<audio::ConnectionRoutes> = None;
+    let mut preserve_until = 0;
     let mut refresh = true;
     let mut connected_before = false;
     let mut last_publish = 0;
@@ -69,9 +73,18 @@ pub fn run(
                 Event::Command(Command::Refresh) => {
                     refresh = true;
                     next_battery = 0;
+                    if let Some(p) = &chosen {
+                        auto_connect.reset(p.address);
+                    }
                 }
                 Event::Command(Command::Restart) => {
                     connection_routes = None;
+                    connect_until = 0;
+                    disconnect_until = 0;
+                    message.clear();
+                    if let Some(p) = &chosen {
+                        auto_connect.reset(p.address);
+                    }
                     scanner = None;
                     next_scanner = 0;
                     refresh = true;
@@ -85,6 +98,10 @@ pub fn run(
                     let _ = prefs.save();
                     refresh = true;
                     last_source = None;
+                    selected_batteries = Batteries::default();
+                    connect_until = 0;
+                    disconnect_until = 0;
+                    message.clear();
                     ears.reset(&mut transport);
                     router.reset();
                 }
@@ -104,22 +121,61 @@ pub fn run(
                 }
                 Event::Command(Command::Connect) => {
                     if let Some(p) = &chosen {
+                        if p.connected || connect_until > t || disconnect_until > t {
+                            continue;
+                        }
+                        prefs.disconnected_addresses.retain(|a| *a != p.address);
+                        let _ = prefs.save();
+                        auto_connect.attempted(p.address, t);
                         let routes = audio::ConnectionRoutes::capture(p);
                         match audio::request_connection(p) {
                             Ok(()) => {
                                 connection_routes = Some(routes);
+                                preserve_until = t + 18_000;
                                 message = "Connecting…".into();
+                                message_until = t + 15_000;
                                 connect_until = t + 15_000;
                                 next_probe = 0;
                             }
-                            Err(_) => {
-                                message = "Open the case, then try Bluetooth settings.".into();
-                                crate::shell::open_bluetooth();
+                            Err(e) => {
+                                crate::shell::log(&e.to_string());
+                                message = "Couldn’t connect. Open the case and try again.".into();
+                                message_until = t + 30_000;
                             }
                         }
                     } else {
-                        crate::shell::open_bluetooth();
-                        message = "Pair once in Windows, then reconnect from Near.".into();
+                        message = "Pair your headphones in Bluetooth settings first.".into();
+                        message_until = t + 30_000;
+                    }
+                }
+                Event::Command(Command::Disconnect) => {
+                    if let Some(p) = &chosen {
+                        if !p.connected || disconnect_until > t {
+                            continue;
+                        }
+                        if !prefs.disconnected_addresses.contains(&p.address) {
+                            if prefs.disconnected_addresses.len() >= 32 {
+                                prefs.disconnected_addresses.remove(0);
+                            }
+                            prefs.disconnected_addresses.push(p.address);
+                            let _ = prefs.save();
+                        }
+                        connection_routes = None;
+                        connect_until = 0;
+                        keepalive = None;
+                        ears.reset(&mut transport);
+                        match audio::request_disconnection(p) {
+                            Ok(()) => {
+                                disconnect_until = t + 10_000;
+                                message.clear();
+                                next_probe = 0;
+                            }
+                            Err(e) => {
+                                crate::shell::log(&e.to_string());
+                                message = "Couldn’t disconnect. Try Bluetooth settings.".into();
+                                message_until = t + 30_000;
+                            }
+                        }
                     }
                 }
                 Event::Standard(address, name, level) => {
@@ -135,7 +191,6 @@ pub fn run(
                         lid: None,
                         approximate: false,
                     };
-                    history.entry(address).or_default().remember(&reading);
                     nearby.insert(address, reading);
                 }
                 Event::Reading(r) => {
@@ -149,20 +204,26 @@ pub fn run(
                     if let Some(open) = r.lid {
                         lids.insert(r.address, (open, r.at));
                     }
-                    history.entry(r.address).or_default().remember(&r);
                     nearby.insert(r.address, r);
                 }
             }
         }
         if refresh || t >= next_probe {
-            next_probe = t + if connect_until > t { 1_000 } else { 5_000 };
+            next_probe =
+                t + if connect_until > t || disconnect_until > t || connection_routes.is_some() {
+                    1_000
+                } else {
+                    5_000
+                };
             refresh = false;
             paired = bluetooth::identity::catalog();
             endpoints = audio::outputs(9).unwrap_or_default();
+            let input_endpoints = audio::inputs(9).unwrap_or_default();
             // Control-channel connections alone are not audio connections.
             for p in &mut paired {
                 p.connected = endpoints
                     .iter()
+                    .chain(input_endpoints.iter())
                     .any(|e| e.state == 1 && audio::matches(e, p));
             }
             chosen = paired
@@ -185,17 +246,27 @@ pub fn run(
                 ears.reset(&mut transport);
                 router.reset();
                 last_source = None;
+                selected_batteries = Batteries::default();
+                connection_routes = None;
+                connect_until = 0;
+                disconnect_until = 0;
+                preserve_until = 0;
+                message.clear();
             }
             if let Some(p) = &chosen {
                 if prefs.speaker_switch || connection_routes.is_some() {
-                    let inputs = audio::inputs(9).unwrap_or_default();
                     if p.connected {
-                        if let Some(routes) = connection_routes.take() {
-                            routes.restore(p, &endpoints, &inputs);
+                        if let Some(routes) = connection_routes.as_mut() {
+                            routes.restore(p, &endpoints, &input_endpoints);
                         }
                     }
                     if prefs.speaker_switch {
-                        router.disconnected(p, &endpoints, &inputs, prefs.speakers_id.as_deref());
+                        router.disconnected(
+                            p,
+                            &endpoints,
+                            &input_endpoints,
+                            prefs.speakers_id.as_deref(),
+                        );
                     }
                 }
             }
@@ -219,44 +290,23 @@ pub fn run(
                 nearby.remove(&a);
             }
         }
-        if history.len() > 32 {
-            let mut values: Vec<_> = history
-                .iter()
-                .map(|(a, h)| {
-                    (
-                        h.parts.iter().flatten().map(|p| p.at).max().unwrap_or(0),
-                        *a,
-                    )
-                })
-                .collect();
-            values.sort_unstable();
-            for (_, a) in values.into_iter().take(history.len() - 32) {
-                history.remove(&a);
-            }
-        }
-        for h in history.values_mut() {
-            h.expire(t);
-        }
+        selected_batteries.expire(t);
         let mut fresh: Vec<_> = nearby
             .values()
             .filter(|r| t.saturating_sub(r.at) < 15_000)
             .cloned()
             .collect();
-        fresh.sort_by_key(|r| -r.signal);
-        let exact = chosen
-            .as_ref()
-            .and_then(|p| fresh.iter().find(|r| r.address == p.address));
-        let compatible: Vec<_> = fresh
-            .iter()
-            .filter(|r| chosen.as_ref().is_some_and(|p| p.model == Some(r.model)))
-            .collect();
-        // Random BLE addresses are not pair identities. Refuse ambiguous model matches.
-        let source = exact
-            .or_else(|| (compatible.len() == 1).then(|| compatible[0]))
-            .or_else(|| chosen.is_none().then(|| fresh.first()).flatten())
-            .cloned();
+        fresh.sort_by_key(|r| std::cmp::Reverse(r.signal));
+        let selection = bluetooth::selection::select(chosen.as_ref(), &fresh);
+        let available = chosen.as_ref().is_some_and(|p| p.available)
+            || selection
+                .reading
+                .as_ref()
+                .is_some_and(|r| t.saturating_sub(r.at) < 5_000 && r.signal >= -75);
+        let source = selection.reading;
         if let Some(r) = &source {
             last_source = Some(r.clone());
+            selected_batteries.remember(r);
         }
         if last_source
             .as_ref()
@@ -271,14 +321,31 @@ pub fn run(
             router.reset();
         }
         if let (Some(p), Some(r)) = (&chosen, &source) {
-            let reliable = !r.approximate
-                || r.address == p.address
-                || (compatible.len() == 1 && p.model == Some(r.model) && r.signal >= -75);
-            if connected && reliable {
+            if connected && selection.sensor_reliable && disconnect_until == 0 {
                 if let Some(state) = ears.update(r, &mut transport, prefs.ear_detection) {
                     if prefs.speaker_switch {
                         router.update(state, p, &endpoints, prefs.speakers_id.as_deref());
                     }
+                }
+            }
+        }
+        if let Some(p) = &chosen {
+            if scanner.is_some()
+                && auto_connect.ready(
+                    p,
+                    available,
+                    &prefs.disconnected_addresses,
+                    connect_until != 0 || disconnect_until != 0,
+                    t,
+                )
+            {
+                let routes = audio::ConnectionRoutes::capture(p);
+                if audio::request_connection(p).is_ok() {
+                    message.clear();
+                    connection_routes = Some(routes);
+                    preserve_until = t + 18_000;
+                    connect_until = t + 15_000;
+                    next_probe = 0;
                 }
             }
         }
@@ -287,7 +354,7 @@ pub fn run(
             let current = audio::default_output(windows::Win32::Media::Audio::eMultimedia).ok();
             let headset = chosen
                 .as_ref()
-                .filter(|_| connected)
+                .filter(|_| connected && disconnect_until == 0)
                 .and_then(|p| audio::selected_headset(&endpoints, p, current.as_deref()));
             if keepalive
                 .as_ref()
@@ -339,15 +406,18 @@ pub fn run(
             .map(|p| p.name.clone())
             .or_else(|| source.as_ref().map(|r| r.name.clone()))
             .unwrap_or_else(|| "AirPods".into());
-        let batteries = source
-            .as_ref()
-            .and_then(|r| history.get(&r.address))
-            .cloned()
-            .unwrap_or_default();
+        let batteries = selected_batteries.clone();
         if prefs.low_battery {
             for (i, part) in batteries.parts.iter().enumerate() {
                 if let Some(s) = part {
-                    let key = (source.as_ref().map(|r| r.address).unwrap_or(0), i);
+                    let key = (
+                        chosen
+                            .as_ref()
+                            .map(|p| p.address)
+                            .or_else(|| source.as_ref().map(|r| r.address))
+                            .unwrap_or(0),
+                        i,
+                    );
                     if s.level >= 30 || s.charging == Some(true) {
                         alerts.remove(&key);
                     } else if s.level <= 20 && t.saturating_sub(s.at) < 15_000 && alerts.insert(key)
@@ -378,12 +448,30 @@ pub fn run(
         connected_before = connected;
         if connected && connect_until != 0 {
             connect_until = 0;
+            preserve_until = t + 3_000;
             message.clear();
+        }
+        if t >= preserve_until {
+            connection_routes = None;
+        }
+        if disconnect_until != 0 && !connected {
+            disconnect_until = 0;
+            message.clear();
+        }
+        if disconnect_until != 0 && t >= disconnect_until {
+            disconnect_until = 0;
+            message = "Still connected. Try Bluetooth settings.".into();
+            message_until = t + 30_000;
         }
         if connect_until != 0 && t >= connect_until {
             connect_until = 0;
             connection_routes = None;
-            message = "Could not connect. Open the case and try again.".into();
+            message = "Couldn’t connect. Open the case and try again.".into();
+            message_until = t + 30_000;
+        }
+        if message_until != 0 && t >= message_until {
+            message.clear();
+            message_until = 0;
         }
         let media = if t >= next_media {
             next_media = t + 2_000;
@@ -392,34 +480,33 @@ pub fn run(
             shared.lock().map(|v| v.media.clone()).unwrap_or_default()
         };
         let last_time = batteries.parts.iter().flatten().map(|s| s.at).max();
-        let note = if compatible.len() > 1 && exact.is_none() {
-            "Multiple AirPods nearby · battery cannot be matched safely".into()
+        let note = if selection.uncertain && last_time.is_none() {
+            "Waiting for a clear battery signal.".into()
         } else if last_time.is_none() {
-            if connected {
-                "Open the case for battery"
-            } else {
-                "Open your case to check battery"
-            }
-            .into()
+            "Open your case to see battery levels.".into()
         } else if last_time.is_some_and(|at| t.saturating_sub(at) > 15_000) {
-            "Last reading · case updates while broadcasting".into()
+            "Last known battery · open your case to update.".into()
         } else if batteries.approximate {
-            "Bluetooth estimate · 10% steps".into()
+            "Estimated battery · updates nearby.".into()
         } else {
-            "Battery reported by your headphones".into()
+            "Battery reported by your headphones.".into()
         };
-        let state = if connected {
+        let state = if disconnect_until > t {
+            "Disconnecting…"
+        } else if connected {
             "Connected"
         } else if scanner.is_none() {
             "Bluetooth unavailable"
         } else if connect_until > t {
             "Connecting…"
+        } else if available {
+            "Nearby"
         } else if chosen.is_some() {
-            "Ready to connect"
+            "Not connected"
         } else if source.is_some() {
             "Nearby · pair once with Windows"
         } else {
-            "Open your case to get started"
+            "Not connected"
         };
         let next = ViewModel {
             preferences: prefs.clone(),
@@ -443,6 +530,8 @@ pub fn run(
             alert_revision,
             alert: alert.clone(),
             connecting: connect_until > t,
+            disconnecting: disconnect_until > t,
+            available,
         };
         if let Ok(mut vm) = shared.lock() {
             if *vm != next {

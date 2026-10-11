@@ -31,7 +31,64 @@ unsafe fn send(hwnd: HWND, msg: u32, wparam: WPARAM, lparam: LPARAM) -> LRESULT 
     windows::Win32::UI::WindowsAndMessaging::SendMessageW(hwnd, msg, Some(wparam), Some(lparam))
 }
 const WIDTH: f32 = 320.;
-const HEIGHT: f32 = 360.;
+const HEIGHT: f32 = 388.;
+fn preview_model(state: Option<&str>) -> ViewModel {
+    let mut vm = ViewModel {
+        preferences: Preferences::default(),
+        ..Default::default()
+    };
+    if state.is_none() || state == Some("empty") {
+        return vm;
+    }
+    vm.chosen = Some(Paired {
+        address: 7,
+        name: "AirPods 4".into(),
+        model: Some(0x201b),
+        ..Default::default()
+    });
+    vm.paired = vec![vm.chosen.clone().unwrap()];
+    vm.name = "AirPods 4".into();
+    vm.model = 0x201b;
+    vm.state = "Nearby".into();
+    vm.available = true;
+    match state {
+        Some("connected") => {
+            vm.chosen.as_mut().unwrap().connected = true;
+            vm.state = "Connected".into();
+            vm.note = "Estimated battery · updates nearby.".into();
+            vm.batteries.approximate = true;
+            vm.batteries.parts = [80, 90, 70].map(|level| {
+                Some(Sample {
+                    level,
+                    at: now(),
+                    charging: Some(true),
+                })
+            });
+        }
+        Some("disconnected") => {
+            vm.available = false;
+            vm.preferences.disconnected_addresses.push(7);
+            vm.state = "Not connected".into();
+        }
+        Some("connecting") => {
+            vm.connecting = true;
+            vm.state = "Connecting…".into();
+        }
+        Some("disconnecting") => {
+            vm.disconnecting = true;
+            vm.state = "Disconnecting…".into();
+        }
+        Some("error") => {
+            vm.message = "Couldn’t connect. Open the case and try again.".into();
+        }
+        Some("uncertain") => {
+            vm.note = "Waiting for a clear battery signal.".into();
+            vm.available = false;
+        }
+        _ => {}
+    }
+    vm
+}
 struct Control {
     window: HWND,
     id: u16,
@@ -68,7 +125,12 @@ struct App {
     combo_stamp: String,
     output_stamp: String,
 }
-pub fn run(open: bool, preview: bool, preview_file: Option<String>) -> windows::core::Result<()> {
+pub fn run(
+    open: bool,
+    preview: bool,
+    preview_file: Option<String>,
+    preview_state: Option<String>,
+) -> windows::core::Result<()> {
     unsafe {
         let _apartment = crate::shell::Apartment::mta();
         let mut token = 0;
@@ -139,9 +201,14 @@ pub fn run(open: bool, preview: bool, preview_file: Option<String>) -> windows::
         {
             let mut app = cell.borrow_mut();
             app.hwnd = window;
+            if preview {
+                app.vm = preview_model(preview_state.as_deref());
+                *app.shared.lock().unwrap() = app.vm.clone();
+            }
             app.scale = GetDpiForWindow(window).max(96) as f32 / 96.;
             app.create_controls()?;
             app.layout();
+            app.update();
             let _ = SetLayeredWindowAttributes(window, COLORREF(0), 255, LWA_ALPHA);
             let corner = 2u32;
             let _ = DwmSetWindowAttribute(
@@ -386,11 +453,11 @@ impl App {
         self.add(1, 255, "Settings", [240., 12., 28., 28.], false)?;
         self.add(2, 255, "Hide Near", [276., 12., 28., 28.], false)?;
         self.add(3, 254, "Back", [14., 53., 26., 28.], false)?;
-        self.add(10, 0, "Connect", [20., 284., 280., 34.], false)?;
-        self.add(11, 0, "Devices", [20., 326., 280., 24.], false)?;
-        self.add(20, 0, "Previous track", [200., 235., 28., 36.], false)?;
-        self.add(21, 0, "Play or pause", [232., 235., 36., 36.], false)?;
-        self.add(22, 0, "Next track", [272., 235., 28., 36.], false)?;
+        self.add(10, 0, "Connect", [20., 308., 280., 36.], false)?;
+        self.add(11, 0, "Devices", [20., 350., 280., 26.], false)?;
+        self.add(20, 0, "Previous track", [200., 252., 28., 36.], false)?;
+        self.add(21, 0, "Play or pause", [232., 252., 36., 36.], false)?;
+        self.add(22, 0, "Next track", [272., 252., 28., 36.], false)?;
         for (id, label, y) in [
             (30, "Start with Windows", 96.),
             (31, "Case popup", 130.),
@@ -401,12 +468,11 @@ impl App {
         ] {
             self.add(id, 1, label, [20., y, 280., 32.], false)?;
         }
-        self.add(90, 1, "Quit Near", [20., 318., 280., 28.], false)?;
+        self.add(90, 1, "Quit Near", [20., 346., 280., 28.], false)?;
         self.add(50, 2, "Paired headphones", [20., 112., 280., 160.], true)?;
         self.add(53, 2, "Refresh", [20., 155., 134., 32.], false)?;
         self.add(54, 2, "Bluetooth settings", [166., 155., 134., 32.], false)?;
         self.add(51, 2, "Speakers", [20., 245., 280., 160.], true)?;
-        self.add(52, 2, "Headphone output", [20., 301., 280., 160.], true)?;
         Ok(())
     }
     unsafe fn layout(&mut self) {
@@ -448,9 +514,10 @@ impl App {
                     LPARAM((24. * s) as isize),
                 );
             }
-            let visible = control.page == 255
+            let visible = (control.page == 255
                 || control.page == 254 && self.page != 0
-                || control.page == self.page;
+                || control.page == self.page)
+                && (control.id != 10 || self.vm.connection_action().is_some());
             let _ = ShowWindow(control.window, if visible { SW_SHOWNA } else { SW_HIDE });
         }
         let _ = InvalidateRect(Some(self.hwnd), None, false);
@@ -508,15 +575,19 @@ impl App {
         }
         let stamp = format!(
             "{:?}:{:?}:{:?}",
-            self.vm.endpoints, self.vm.preferences.speakers_id, self.vm.preferences.headphones_id
+            self.vm.endpoints, self.vm.preferences.speakers_id, chosen
         );
         if stamp != self.output_stamp {
             self.output_stamp = stamp;
-            for (id, target) in [
-                (51, self.vm.preferences.speakers_id.as_ref()),
-                (52, self.vm.preferences.headphones_id.as_ref()),
-            ] {
-                let h = self.control(id);
+            {
+                let target = self.vm.preferences.speakers_id.as_ref();
+                let outputs: Vec<_> = self
+                    .vm
+                    .endpoints
+                    .iter()
+                    .filter(|e| crate::audio::is_speaker_target(e, self.vm.chosen.as_ref()))
+                    .collect();
+                let h = self.control(51);
                 send(h, CB_RESETCONTENT, WPARAM(0), LPARAM(0));
                 let automatic = shell::wide("Automatic");
                 send(
@@ -525,30 +596,31 @@ impl App {
                     WPARAM(0),
                     LPARAM(automatic.as_ptr() as isize),
                 );
-                for endpoint in &self.vm.endpoints {
+                for endpoint in &outputs {
                     let value = shell::wide(&endpoint.name);
                     send(h, CB_ADDSTRING, WPARAM(0), LPARAM(value.as_ptr() as isize));
                 }
                 let index = target
-                    .and_then(|t| self.vm.endpoints.iter().position(|e| &e.id == t))
+                    .and_then(|t| outputs.iter().position(|e| &e.id == t))
                     .map(|i| i + 1)
                     .unwrap_or(0);
                 send(h, CB_SETCURSEL, WPARAM(index), LPARAM(0));
+                let _ = EnableWindow(h, !outputs.is_empty());
             }
         }
-        let connected = self.vm.chosen.as_ref().is_some_and(|p| p.connected);
-        let label = if self.vm.connecting {
-            "Connecting…"
-        } else if connected {
-            "Connected"
-        } else if self.vm.chosen.is_some() {
-            "Connect"
-        } else {
-            "Pair with Windows"
-        };
+        let action = self.vm.connection_action();
+        let (label, enabled) = action.unwrap_or(("Connect", false));
         let value = shell::wide(label);
         let _ = SetWindowTextW(self.control(10), PCWSTR(value.as_ptr()));
-        let _ = EnableWindow(self.control(10), !connected && !self.vm.connecting);
+        let _ = EnableWindow(self.control(10), enabled);
+        let _ = ShowWindow(
+            self.control(10),
+            if self.page == 0 && action.is_some() {
+                SW_SHOWNA
+            } else {
+                SW_HIDE
+            },
+        );
         for (id, available) in [
             (20, self.vm.media.previous),
             (21, self.vm.media.toggle),
@@ -579,21 +651,19 @@ impl App {
                 if let Some(p) = self.vm.paired.get(index as usize) {
                     self.send(Command::Select(p.address));
                 }
-            } else if id == 51 || id == 52 {
+            } else if id == 51 {
                 let value = if index <= 0 {
                     None
                 } else {
                     self.vm
                         .endpoints
-                        .get(index as usize - 1)
+                        .iter()
+                        .filter(|e| crate::audio::is_speaker_target(e, self.vm.chosen.as_ref()))
+                        .nth(index as usize - 1)
                         .map(|e| e.id.clone())
                 };
                 let mut p = self.vm.preferences.clone();
-                if id == 51 {
-                    p.speakers_id = value;
-                } else {
-                    p.headphones_id = value;
-                }
+                p.speakers_id = value;
                 self.send(Command::Preferences(p));
             }
             return;
@@ -609,7 +679,19 @@ impl App {
                 self.page = 0;
                 self.layout();
             }
-            10 => self.send(Command::Connect),
+            10 => {
+                if self
+                    .vm
+                    .connection_action()
+                    .is_some_and(|(_, enabled)| enabled)
+                {
+                    self.send(if self.vm.chosen.as_ref().is_some_and(|p| p.connected) {
+                        Command::Disconnect
+                    } else {
+                        Command::Connect
+                    });
+                }
+            }
             11 => {
                 self.page = 2;
                 self.automatic = false;
@@ -1013,26 +1095,28 @@ impl App {
                     }
                 }
             }
-            c.text(&self.vm.note, 20., 204., 280., 18., small, MUTED, false);
+            let helper = if self.vm.message.is_empty() || self.vm.message == "Connecting…" {
+                &self.vm.note
+            } else {
+                &self.vm.message
+            };
+            c.wrapped(helper, [20., 208., 280., 36.], normal, MUTED);
             let media_title = if self.vm.media.title.is_empty() {
                 "Nothing playing"
             } else {
                 &self.vm.media.title
             };
-            c.text(media_title, 20., 236., 169., 18., normal, INK, false);
+            c.text(media_title, 20., 254., 169., 18., normal, INK, false);
             c.text(
                 &self.vm.media.artist,
                 20.,
-                256.,
+                276.,
                 169.,
                 16.,
                 small,
                 MUTED,
                 false,
             );
-            if !self.vm.message.is_empty() {
-                c.text(&self.vm.message, 20., 271., 280., 13., small, MUTED, false);
-            }
         } else if self.page == 2 {
             c.text("Your headphones", 20., 90., 280., 18., small, MUTED, false);
             c.text(
@@ -1046,29 +1130,15 @@ impl App {
                 false,
             );
             c.text("Speakers", 20., 225., 280., 16., small, MUTED, false);
-            c.text(
-                "Headphone output",
-                20.,
-                280.,
-                280.,
-                16.,
-                small,
-                MUTED,
-                false,
-            );
-            c.text(
+            c.wrapped(
                 if self.vm.paired.is_empty() {
-                    "Pair once in Windows to enable Connect."
+                    "Pair your headphones in Bluetooth settings first."
                 } else {
-                    "Opening the case does not repeat pairing."
+                    "Pair once in Windows. Near reconnects for you."
                 },
-                20.,
-                337.,
-                280.,
-                16.,
-                small,
+                [20., 289., 280., 36.],
+                normal,
                 MUTED,
-                false,
             );
         }
     }
@@ -1167,7 +1237,9 @@ impl App {
                 );
             }
         } else {
-            let primary = id == 10;
+            let primary = id == 10
+                && !self.vm.disconnecting
+                && !self.vm.chosen.as_ref().is_some_and(|p| p.connected);
             let color = if primary && !disabled {
                 if pressed { 0xff194b40 } else { ACCENT }
             } else if id == 11 || id == 90 {
@@ -1176,16 +1248,14 @@ impl App {
                 LINE
             };
             c.round(0., 0., w, h, 8., color);
+            if id == 10 && !primary {
+                c.round(1., 1., w - 2., h - 2., 7., BG);
+            }
             let text = if id == 10 {
-                if self.vm.connecting {
-                    "Connecting…"
-                } else if self.vm.chosen.as_ref().is_some_and(|p| p.connected) {
-                    "Connected"
-                } else if self.vm.chosen.is_some() {
-                    "Connect"
-                } else {
-                    "Pair with Windows"
-                }
+                self.vm
+                    .connection_action()
+                    .map(|(label, _)| label)
+                    .unwrap_or("Connect")
             } else {
                 &label
             };

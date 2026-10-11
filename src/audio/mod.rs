@@ -2,7 +2,7 @@ pub mod keep_alive;
 pub mod media;
 mod routing;
 use crate::model::{Endpoint, Paired};
-pub use routing::{ConnectionRoutes, Router, selected_headset};
+pub use routing::{ConnectionRoutes, Router, is_speaker_target, selected_headset};
 use windows::Win32::Foundation::PROPERTYKEY;
 use windows::Win32::System::Com::StructuredStorage::{
     PropVariantToGUID, PropVariantToStringAlloc, PropVariantToUInt32,
@@ -73,7 +73,7 @@ fn endpoints(flow: EDataFlow, states: u32) -> windows::core::Result<Vec<Endpoint
                 let _ = PropVariantClear(&mut value);
                 guid
             });
-            let mut form = props.GetValue(&FORM)?;
+            let mut form = props.GetValue(&FORM).unwrap_or_default();
             let speakers = PropVariantToUInt32(&form).ok() == Some(1);
             let _ = PropVariantClear(&mut form);
             list.push(Endpoint {
@@ -96,11 +96,26 @@ pub fn matches(e: &Endpoint, p: &Paired) -> bool {
             .any(|part| part == format!("{:012X}", p.address))
 }
 pub fn request_connection(p: &Paired) -> windows::core::Result<()> {
+    request_link(p, false)
+}
+pub fn request_disconnection(p: &Paired) -> windows::core::Result<()> {
+    request_link(p, true)
+}
+fn request_link(p: &Paired, disconnect: bool) -> windows::core::Result<()> {
     unsafe {
-        let candidates: Vec<_> = outputs(9)?.into_iter().filter(|e| matches(e, p)).collect();
-        if candidates.iter().any(|e| e.state == 1) {
+        let mut candidates: Vec<_> = outputs(9)?.into_iter().filter(|e| matches(e, p)).collect();
+        if !disconnect && candidates.iter().any(|e| e.state == 1) {
             return Ok(());
         }
+        if disconnect {
+            candidates.extend(
+                inputs(9)?
+                    .into_iter()
+                    .filter(|e| e.state == 1 && matches(e, p)),
+            );
+            candidates.retain(|e| e.state == 1);
+        }
+        let mut accepted = false;
         let mut error = windows::core::Error::new(
             windows::core::HRESULT(0x80070490u32 as i32),
             "Windows has no paired audio endpoint. Open Bluetooth settings.",
@@ -119,13 +134,13 @@ pub fn request_connection(p: &Paired) -> windows::core::Result<()> {
                     Anonymous: KSIDENTIFIER_0 {
                         Anonymous: KSIDENTIFIER_0_0 {
                             Set: GUID::from_u128(0x7fa06c40_b8f6_4c7e_8556_e8c33a12e54d),
-                            Id: 0,
+                            Id: u32::from(disconnect),
                             Flags: 1,
                         },
                     },
                 };
                 let mut returned = 0;
-                // ONESHOT_RECONNECT asks the existing Windows driver; endpoint state confirms success.
+                // ONESHOT requests use the existing driver; endpoint state confirms completion.
                 ks.KsProperty(
                     &property,
                     std::mem::size_of::<KSIDENTIFIER>() as u32,
@@ -135,11 +150,16 @@ pub fn request_connection(p: &Paired) -> windows::core::Result<()> {
                 )
             })();
             match result {
-                Ok(()) => return Ok(()),
+                Ok(()) => {
+                    if !disconnect {
+                        return Ok(());
+                    }
+                    accepted = true;
+                }
                 Err(e) => error = e,
             }
         }
-        Err(error)
+        if accepted { Ok(()) } else { Err(error) }
     }
 }
 pub fn default_output(role: ERole) -> windows::core::Result<String> {

@@ -123,6 +123,30 @@ impl Canvas {
         color: u32,
         center: bool,
     ) {
+        self.text_flags(
+            text,
+            [x, y, w, h],
+            font,
+            color,
+            DT_SINGLELINE
+                | DT_VCENTER
+                | DT_END_ELLIPSIS
+                | DT_NOPREFIX
+                | if center { DT_CENTER } else { DT_LEFT },
+        );
+    }
+    pub fn wrapped(&self, text: &str, rect: [f32; 4], font: HFONT, color: u32) {
+        self.text_flags(text, rect, font, color, DT_WORDBREAK | DT_NOPREFIX);
+    }
+    fn text_flags(
+        &self,
+        text: &str,
+        rect: [f32; 4],
+        font: HFONT,
+        color: u32,
+        flags: DRAW_TEXT_FORMAT,
+    ) {
+        let [x, y, w, h] = rect;
         // DrawTextW reads the string pointer even for a zero-length Rust slice.
         if text.is_empty() {
             return;
@@ -144,16 +168,7 @@ impl Canvas {
                 right: ((x + w) * s) as i32,
                 bottom: ((y + h) * s) as i32,
             };
-            DrawTextW(
-                dc,
-                &mut value,
-                &mut rect,
-                DT_SINGLELINE
-                    | DT_VCENTER
-                    | DT_END_ELLIPSIS
-                    | DT_NOPREFIX
-                    | if center { DT_CENTER } else { DT_LEFT },
-            );
+            DrawTextW(dc, &mut value, &mut rect, flags);
             SelectObject(dc, old);
             GdipReleaseDC(self.g, dc);
         }
@@ -364,6 +379,43 @@ mod tests {
             scale: 1.,
         });
         canvas.text("", 0., 0., 10., 10., HFONT::default(), 0, false);
+    }
+    #[test]
+    fn helper_text_fits_without_clipping_at_supported_display_scales() {
+        unsafe {
+            let dc = CreateCompatibleDC(None);
+            for scale in [1., 1.25, 1.5, 2.] {
+                let f = font(scale, 12, false);
+                let old = SelectObject(dc, HGDIOBJ(f.0));
+                for text in [
+                    "Waiting for a clear battery signal.",
+                    "Open your case to see battery levels.",
+                    "Last known battery · open your case to update.",
+                    "Couldn’t connect. Open the case and try again.",
+                    "Couldn’t disconnect. Try Bluetooth settings.",
+                    "Pair your headphones in Bluetooth settings first.",
+                ] {
+                    let mut value: Vec<u16> = text.encode_utf16().collect();
+                    let mut rect = RECT {
+                        right: (280. * scale) as i32,
+                        ..Default::default()
+                    };
+                    let height = DrawTextW(
+                        dc,
+                        &mut value,
+                        &mut rect,
+                        DT_WORDBREAK | DT_NOPREFIX | DT_CALCRECT,
+                    );
+                    assert!(
+                        height > 0 && height <= (36. * scale) as i32,
+                        "helper clipped at {scale}: {text}"
+                    );
+                }
+                SelectObject(dc, old);
+                let _ = DeleteObject(HGDIOBJ(f.0));
+            }
+            let _ = DeleteDC(dc);
+        }
     }
     #[test]
     fn ui_fonts_keep_the_selected_family_and_scale() {

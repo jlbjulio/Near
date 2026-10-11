@@ -1,6 +1,5 @@
 use serde::{Deserialize, Serialize};
 use std::{
-    collections::HashMap,
     path::PathBuf,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -32,8 +31,7 @@ pub struct Preferences {
     pub preferred_address: u64,
     #[serde(alias = "SpeakersId")]
     pub speakers_id: Option<String>,
-    #[serde(alias = "HeadphonesId")]
-    pub headphones_id: Option<String>,
+    pub disconnected_addresses: Vec<u64>,
 }
 impl Default for Preferences {
     fn default() -> Self {
@@ -45,7 +43,7 @@ impl Default for Preferences {
             speaker_switch: true,
             preferred_address: 0,
             speakers_id: None,
-            headphones_id: None,
+            disconnected_addresses: vec![],
         }
     }
 }
@@ -70,6 +68,7 @@ pub struct Paired {
     pub address: u64,
     pub name: String,
     pub connected: bool,
+    pub available: bool,
     pub model: Option<u16>,
     pub container: Option<windows::core::GUID>,
 }
@@ -179,6 +178,8 @@ pub struct ViewModel {
     pub alert_revision: u64,
     pub alert: String,
     pub connecting: bool,
+    pub disconnecting: bool,
+    pub available: bool,
 }
 impl PartialEq for Preferences {
     fn eq(&self, o: &Self) -> bool {
@@ -189,7 +190,7 @@ impl PartialEq for Preferences {
             && self.speaker_switch == o.speaker_switch
             && self.preferred_address == o.preferred_address
             && self.speakers_id == o.speakers_id
-            && self.headphones_id == o.headphones_id
+            && self.disconnected_addresses == o.disconnected_addresses
     }
 }
 impl Default for ViewModel {
@@ -202,8 +203,8 @@ impl Default for ViewModel {
             batteries: Batteries::default(),
             model: 0,
             name: "AirPods".into(),
-            state: "Open your case to get started".into(),
-            note: "Battery updates when your AirPods broadcast".into(),
+            state: "Not connected".into(),
+            note: "Open your case to see battery levels.".into(),
             media: Media::default(),
             endpoints: vec![],
             message: String::new(),
@@ -212,11 +213,37 @@ impl Default for ViewModel {
             alert_revision: 0,
             alert: String::new(),
             connecting: false,
+            disconnecting: false,
+            available: false,
         }
+    }
+}
+impl ViewModel {
+    pub fn connection_action(&self) -> Option<(&'static str, bool)> {
+        let paired = self.chosen.as_ref()?;
+        if self.disconnecting {
+            return Some(("Disconnecting…", false));
+        }
+        if self.connecting {
+            return Some(("Connecting…", false));
+        }
+        if paired.connected {
+            return Some(("Disconnect", true));
+        }
+        if self.available
+            || self
+                .preferences
+                .disconnected_addresses
+                .contains(&paired.address)
+        {
+            return Some(("Connect", true));
+        }
+        None
     }
 }
 pub enum Command {
     Connect,
+    Disconnect,
     Select(u64),
     Media(&'static str),
     Preferences(Preferences),
@@ -229,7 +256,6 @@ pub enum Event {
     Command(Command),
     Standard(u64, String, u8),
 }
-pub type History = HashMap<u64, Batteries>;
 
 #[cfg(test)]
 mod tests {
@@ -292,5 +318,34 @@ mod tests {
         let json = serde_json::to_string(&p).unwrap();
         assert!(!json.contains("Voice"));
         assert!(!json.contains("Hotkeys"));
+    }
+    #[test]
+    fn connection_button_follows_presence_and_manual_intent() {
+        let mut vm = ViewModel {
+            preferences: Preferences::default(),
+            ..Default::default()
+        };
+        assert_eq!(vm.connection_action(), None);
+        vm.chosen = Some(Paired {
+            address: 7,
+            ..Default::default()
+        });
+        assert_eq!(vm.connection_action(), None);
+        vm.available = true;
+        assert_eq!(vm.connection_action(), Some(("Connect", true)));
+        vm.chosen.as_mut().unwrap().connected = true;
+        assert_eq!(vm.connection_action(), Some(("Disconnect", true)));
+        vm.disconnecting = true;
+        assert_eq!(vm.connection_action(), Some(("Disconnecting…", false)));
+        vm.disconnecting = false;
+        vm.chosen.as_mut().unwrap().connected = false;
+        vm.available = false;
+        vm.preferences.disconnected_addresses.push(7);
+        assert_eq!(vm.connection_action(), Some(("Connect", true)));
+        vm.connecting = true;
+        assert_eq!(vm.connection_action(), Some(("Connecting…", false)));
+        let saved = serde_json::to_string(&vm.preferences).unwrap();
+        let reloaded: Preferences = serde_json::from_str(&saved).unwrap();
+        assert_eq!(reloaded.disconnected_addresses, vec![7]);
     }
 }

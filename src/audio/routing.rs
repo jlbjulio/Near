@@ -23,12 +23,7 @@ fn speakers<'a>(
     paired: &Paired,
     preferred: Option<&str>,
 ) -> Option<&'a Endpoint> {
-    let eligible = |e: &&Endpoint| {
-        e.state == 1
-            && !virtual_device(e)
-            && !matches(e, paired)
-            && !e.instance.to_ascii_uppercase().contains("BTH")
-    };
+    let eligible = |e: &&Endpoint| is_speaker_target(e, Some(paired));
     outputs
         .iter()
         .filter(eligible)
@@ -43,6 +38,12 @@ pub fn selected_headset<'a>(
     outputs.iter().find(|e| {
         Some(e.id.as_str()) == current && e.state == 1 && !virtual_device(e) && matches(e, paired)
     })
+}
+pub fn is_speaker_target(e: &Endpoint, paired: Option<&Paired>) -> bool {
+    e.state == 1
+        && !virtual_device(e)
+        && paired.is_none_or(|p| !matches(e, p))
+        && !e.instance.to_ascii_uppercase().contains("BTH")
 }
 
 trait Routes {
@@ -209,28 +210,34 @@ impl ConnectionRoutes {
         }
         Self(saved)
     }
-    pub fn restore(self, paired: &Paired, outputs: &[Endpoint], inputs: &[Endpoint]) {
+    pub fn restore(&mut self, paired: &Paired, outputs: &[Endpoint], inputs: &[Endpoint]) {
         self.restore_with(paired, outputs, inputs, &mut WindowsRoutes);
     }
     fn restore_with(
-        self,
+        &mut self,
         paired: &Paired,
         outputs: &[Endpoint],
         inputs: &[Endpoint],
         routes: &mut impl Routes,
     ) {
-        for (flow, role, saved) in self.0 {
-            let devices = if flow == eRender { outputs } else { inputs };
-            let current = routes.current(flow, role);
+        self.0.retain(|(flow, role, saved)| {
+            let devices = if *flow == eRender { outputs } else { inputs };
+            let current = routes.current(*flow, *role);
+            if !devices.iter().any(|e| e.id == *saved && e.state == 1) {
+                return false;
+            }
+            if current.as_deref().is_none_or(|id| id == saved) {
+                return true;
+            }
             if devices.iter().any(|e| {
                 Some(e.id.as_str()) == current.as_deref()
                     && !virtual_device(e)
                     && matches(e, paired)
-            }) && devices.iter().any(|e| e.id == saved && e.state == 1)
-            {
-                routes.select(flow, role, &saved);
+            }) {
+                return !routes.select(*flow, *role, saved);
             }
-        }
+            false
+        });
     }
 }
 
@@ -420,7 +427,7 @@ mod tests {
     #[test]
     fn connection_restores_sonar_only_when_windows_switched_to_airpods() {
         let (paired, outputs, inputs, mut routes) = fixture();
-        let saved = ConnectionRoutes::capture_with(&paired, &outputs, &inputs, &routes);
+        let mut saved = ConnectionRoutes::capture_with(&paired, &outputs, &inputs, &routes);
         routes
             .defaults
             .insert((eRender.0, eConsole.0), "pods".into());
@@ -453,5 +460,17 @@ mod tests {
                 .id,
             "pods"
         );
+    }
+    #[test]
+    fn a_delayed_windows_default_change_still_preserves_the_mixer() {
+        let (paired, outputs, inputs, mut routes) = fixture();
+        let mut saved = ConnectionRoutes::capture_with(&paired, &outputs, &inputs, &routes);
+        saved.restore_with(&paired, &outputs, &inputs, &mut routes);
+        assert!(routes.writes.is_empty());
+        routes
+            .defaults
+            .insert((eRender.0, eConsole.0), "pods".into());
+        saved.restore_with(&paired, &outputs, &inputs, &mut routes);
+        assert_eq!(routes.current(eRender, eConsole).as_deref(), Some("sonar"));
     }
 }

@@ -10,7 +10,7 @@ Your AirPods, right here on Windows. A small, free companion that lives in your 
 
 - **Battery at a glance.** Left, right, and case levels, with charging indicators and a tray percentage.
 - **A familiar little popup.** Open your case and get a clean battery view. It fades away when you are done.
-- **Connect from the flyout.** Reconnect headphones already paired with your PC.
+- **Connect automatically.** Near reconnects paired headphones when detected nearby. Choose Disconnect to keep them disconnected until you choose Connect again.
 - **Automatic pause.** Pause when you remove an earbud; resume playback Near paused when you put it back.
 - **Audio that follows your setup.** Automatic switching for directly selected AirPods. SteelSeries Sonar and other virtual mixers keep control of their routes.
 - **Simple playback controls.** Play, pause, and skip without opening your music app.
@@ -25,11 +25,11 @@ Battery is shown in Near and the system tray. Windows widgets and live tiles are
 
 1. Download the Windows release, extract the ZIP, and run **Near.exe**.
 2. Pair your AirPods with this PC in **Windows Bluetooth settings** once. AirPods 4 and AirPods Pro 3 use a double-tap on the front of the open case to enter pairing mode; older cases use the setup button.
-3. Click the Near icon beside the clock. Open your case to see battery updates, or choose **Connect** for your paired AirPods.
+3. Click the Near icon beside the clock. Open your case to see battery updates. Near reconnects your paired AirPods when they are detected nearby.
 
 Clicking the tray icon opens or focuses Near. Drag the flyout by its header, or press Escape or click outside to dismiss it. Settings lets you choose automatic playback, automatic switching, alerts, animations, and startup.
 
-Near respects your selected Windows output and microphone. With automatic switching enabled, directly selected AirPods can fall back to physical speakers or a microphone when disconnected. If you use Sonar, Near leaves those virtual routes alone. Connecting from Near preserves your existing audio selection.
+Near respects your selected Windows output and microphone. With automatic switching enabled, directly selected AirPods can fall back to physical speakers or a microphone when disconnected. If you use Sonar, Near leaves those virtual routes alone. Connecting from Near preserves your existing audio selection. Disconnect pauses Near’s automatic reconnection for those headphones, including after restarting Near; Connect resumes it.
 
 ### What to expect
 

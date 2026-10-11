@@ -20,7 +20,7 @@ try {
         & cargo build --locked --release --quiet *> (Join-Path $logRoot 'release-build.log')
         if($LASTEXITCODE){throw 'Build failed. See evidence/release-build.log.'}
     }
-    $version='1.0.0'
+    $version=(Select-String -LiteralPath (Join-Path $root 'Cargo.toml') -Pattern '^version = "([^"]+)"$').Matches[0].Groups[1].Value
     $release=Join-Path $root 'release'
     $bundle=Join-Path $root "packaging\work\Near-$version-windows-x64"
     $binaryZip=Join-Path $release "Near-$version-windows-x64.zip"

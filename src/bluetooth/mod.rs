@@ -1,6 +1,7 @@
 pub mod advertisement;
 pub mod galaxy;
 pub mod identity;
+pub mod selection;
 pub mod standard;
 use crate::model::{Event, now};
 use std::{
