@@ -1,7 +1,6 @@
 use crate::{
     audio::{
         self,
-        keep_alive::KeepAlive,
         media::{EarAutomation, Transport},
     },
     bluetooth::{self, advertisement},
@@ -41,14 +40,12 @@ pub fn run(
     transport.initialize();
     let mut ears = EarAutomation::default();
     let mut router = audio::Router::default();
-    let mut keepalive: Option<KeepAlive> = None;
     let mut galaxy: Option<bluetooth::galaxy::Listener> = None;
     let mut next_probe = 0;
     let mut next_media = 0;
     let mut next_battery = 0;
     let mut next_scanner = 0;
     let mut next_galaxy = 0;
-    let mut next_audio = 0;
     let mut last_popup = 0;
     let mut popup_revision = 0;
     let mut alert_revision = 0;
@@ -90,7 +87,6 @@ pub fn run(
                     refresh = true;
                     ears.reset(&mut transport);
                     router.reset();
-                    keepalive = None;
                 }
                 Event::Command(Command::Select(address)) => {
                     connection_routes = None;
@@ -170,7 +166,6 @@ pub fn run(
                         }
                         connection_routes = None;
                         connect_until = 0;
-                        keepalive = None;
                         ears.reset(&mut transport);
                         match audio::request_disconnection(p) {
                             Ok(()) => {
@@ -354,25 +349,6 @@ pub fn run(
                     preserve_until = t + 18_000;
                     connect_until = t + 15_000;
                     next_probe = 0;
-                }
-            }
-        }
-        if t >= next_audio {
-            next_audio = t + 5_000;
-            let current = audio::default_output(windows::Win32::Media::Audio::eMultimedia).ok();
-            let headset = chosen
-                .as_ref()
-                .filter(|_| connected && disconnect_until == 0)
-                .and_then(|p| audio::selected_headset(&endpoints, p, current.as_deref()));
-            if keepalive
-                .as_ref()
-                .is_some_and(|k| k.failed() || headset.is_none_or(|h| h.id != k.endpoint))
-            {
-                keepalive = None;
-            }
-            if keepalive.is_none() {
-                if let Some(e) = headset {
-                    keepalive = KeepAlive::start(&e.id);
                 }
             }
         }

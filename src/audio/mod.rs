@@ -1,8 +1,7 @@
-pub mod keep_alive;
 pub mod media;
 mod routing;
 use crate::model::{Endpoint, Paired};
-pub use routing::{ConnectionRoutes, Router, is_speaker_target, selected_headset};
+pub use routing::{ConnectionRoutes, Router, is_speaker_target};
 use windows::Win32::Foundation::PROPERTYKEY;
 use windows::Win32::System::Com::StructuredStorage::{
     PropVariantToGUID, PropVariantToStringAlloc, PropVariantToUInt32,
@@ -161,9 +160,6 @@ fn request_link(p: &Paired, disconnect: bool) -> windows::core::Result<()> {
         }
         if accepted { Ok(()) } else { Err(error) }
     }
-}
-pub fn default_output(role: ERole) -> windows::core::Result<String> {
-    default_device(eRender, role)
 }
 fn default_device(flow: EDataFlow, role: ERole) -> windows::core::Result<String> {
     unsafe {

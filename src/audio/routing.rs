@@ -30,7 +30,7 @@ fn speakers<'a>(
         .find(|e| Some(e.id.as_str()) == preferred)
         .or_else(|| outputs.iter().filter(eligible).find(|e| e.speakers))
 }
-pub fn selected_headset<'a>(
+fn selected_headset<'a>(
     outputs: &'a [Endpoint],
     paired: &Paired,
     current: Option<&str>,
