@@ -102,7 +102,7 @@ pub struct Reading {
     pub charging: [Option<bool>; 3],
     pub ears: [Option<bool>; 2],
     pub lid: Option<bool>,
-    /// Both earbuds report being in the case.
+    /// Every recent frame said both earbuds are in the case; false when unknown.
     pub cased: bool,
     pub approximate: bool,
 }
@@ -185,7 +185,6 @@ pub struct ViewModel {
     pub preferences: Preferences,
     pub paired: Vec<Paired>,
     pub chosen: Option<Paired>,
-    pub nearby: Vec<Reading>,
     pub batteries: Batteries,
     pub model: u16,
     pub name: String,
@@ -220,7 +219,6 @@ impl Default for ViewModel {
             preferences: Preferences::load(),
             paired: vec![],
             chosen: None,
-            nearby: vec![],
             batteries: Batteries::default(),
             model: 0,
             name: "AirPods".into(),

@@ -46,6 +46,7 @@ pub fn run(
     let mut next_battery = 0;
     let mut next_scanner = 0;
     let mut next_galaxy = 0;
+    let mut galaxy_delay = 30_000;
     let mut last_popup = 0;
     let mut popup_revision = 0;
     let mut alert_revision = 0;
@@ -59,10 +60,11 @@ pub fn run(
     let mut refresh = true;
     let mut connected_before = false;
     let mut last_publish = 0;
+    // Lid openings wait here until a publish pass can show the popup.
+    let mut opened = HashSet::new();
     loop {
         let event = rx.recv_timeout(Duration::from_millis(300));
         let t = now();
-        let mut opened = HashSet::new();
         let events = event.into_iter().chain(rx.try_iter().take(255));
         for event in events {
             match event {
@@ -357,15 +359,19 @@ pub fn run(
         }
         if t >= next_battery {
             next_battery = t + 60_000;
-            if chosen.as_ref().is_some_and(|p| {
-                p.connected && p.model.is_none() && !p.name.to_lowercase().contains("buds")
-            }) {
+            if let Some(address) = chosen
+                .as_ref()
+                .filter(|p| {
+                    p.connected && p.model.is_none() && !p.name.to_lowercase().contains("buds")
+                })
+                .map(|p| p.address)
+            {
                 let tx = tx.clone();
                 let _ = std::thread::Builder::new()
                     .name("Near battery".into())
                     .spawn(move || {
                         let _apartment = crate::shell::Apartment::mta();
-                        bluetooth::standard::read(tx);
+                        bluetooth::standard::read(tx, address);
                     });
             }
         }
@@ -377,7 +383,13 @@ pub fn run(
             .is_some_and(|g| buds.is_none_or(|p| p.address != g.address) || g.finished())
         {
             galaxy = None;
-            next_galaxy = t + 30_000;
+            // Buds without the service would otherwise be queried over the air every 30 s.
+            next_galaxy = t + galaxy_delay;
+            galaxy_delay = (galaxy_delay * 2).min(600_000);
+        }
+        if buds.is_none() {
+            galaxy_delay = 30_000;
+            next_galaxy = next_galaxy.min(t + 30_000);
         }
         if galaxy.is_none() && t >= next_galaxy {
             if let Some(p) = buds {
@@ -416,6 +428,7 @@ pub fn run(
             popup_revision += 1;
             last_popup = t;
         }
+        opened.clear();
         connected_before = connected;
         if connected && connect_until != 0 {
             connect_until = 0;
@@ -483,7 +496,6 @@ pub fn run(
             preferences: prefs.clone(),
             paired: paired.clone(),
             chosen: chosen.clone(),
-            nearby: fresh.into_iter().take(12).collect(),
             batteries,
             model: chosen
                 .as_ref()

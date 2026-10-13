@@ -945,6 +945,11 @@ impl App {
                 }
             }
         } else if id == 2 {
+            // Opening Settings or Devices turns an automatic popup into a kept-open flyout.
+            if !self.automatic {
+                let _ = KillTimer(Some(self.hwnd), 2);
+                return;
+            }
             let mut p = POINT::default();
             let mut r = RECT::default();
             let _ = GetCursorPos(&mut p);
@@ -1050,8 +1055,14 @@ impl App {
         let medium = self.f(14, true);
         let large = self.f(22, true);
         let title = self.f(17, true);
+        // Fill edge to edge: DWM rounds the window itself on Windows 11, and a painted
+        // rounded rect would leave dark buffer pixels in the corners.
+        let mut bounds = RECT::default();
+        let _ = GetClientRect(self.hwnd, &mut bounds);
+        let background = CreateSolidBrush(rgb(BG));
+        FillRect(dc, &bounds, background);
+        let _ = DeleteObject(HGDIOBJ(background.0));
         let c = Canvas::new(dc, self.scale);
-        c.round(0., 0., WIDTH, HEIGHT, 12., BG);
         c.logo(20., 14., 22.);
         c.text("near", 50., 12., 110., 26., medium, INK, false);
         if self.page != 0 {

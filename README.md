@@ -10,7 +10,7 @@ Your AirPods, right here on Windows. A small, free companion that lives in your 
 
 - **Battery at a glance.** Left, right, and case levels, with charging indicators and a tray percentage.
 - **A familiar little popup.** Open your case and get a clean battery view. It fades away when you are done.
-- **Connect automatically.** Near reconnects paired headphones when you take an earbud out of the case nearby; opening the case alone just shows battery. Choose Disconnect to keep them disconnected until you choose Connect again.
+- **Connect automatically.** Near reconnects paired headphones when you take an earbud out of the case nearby. Opening the case alone shows battery; AirPods may still reconnect on their own to the last device they used. Choose Disconnect to keep them disconnected until you choose Connect again.
 - **Automatic pause.** Pause when you remove an earbud; resume playback Near paused when you put it back.
 - **Audio that follows your setup.** Automatic switching for directly selected AirPods. SteelSeries Sonar and other virtual mixers keep control of their routes.
 - **Simple playback controls.** Play, pause, and skip without opening your music app.

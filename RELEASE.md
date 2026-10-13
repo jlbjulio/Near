@@ -1,8 +1,13 @@
-## Near 1.0.8
+## Near 1.0.9
 
 A quiet AirPods companion for Windows, written in Rust.
 
-- Opening the case only shows battery. Near reconnects once an earbud (left or right) leaves the case, so a quick battery check no longer pulls your AirPods away from your phone. Connect in the flyout still works anytime.
+- The case-opening popup now appears reliably; most openings were previously missed.
+- Hovering the tray icon shows left, right, and case battery again.
+- Cleaner tray icon and flyout corners, with no dark pixels at the edges.
+- Settings and Devices stay open when reached from an automatic popup.
+- Standard-battery headphones no longer wake other Bluetooth devices such as mice and keyboards.
+- Near no longer starts a connection while both earbuds are in the open case; it waits until one (left or right) comes out. AirPods may still reconnect on their own to the last device they used. AirPods Pro 3 keep the previous behavior until verified. Connect in the flyout still works anytime.
 - Longer AirPods battery life: Near no longer plays a continuous silent audio stream to connected headphones, so they can idle normally when nothing is playing.
 - Lower CPU use: Windows now filters Bluetooth broadcasts so Near only wakes for AirPods and Beats, not every nearby device.
 - Battery readings, ear detection, automatic pause, audio switching, and reconnection work as before.
@@ -20,7 +25,7 @@ A quiet AirPods companion for Windows, written in Rust.
 - A movable flyout that opens or focuses when you click the tray icon.
 - Consistent Segoe UI Variable typography on Windows 11, vector playback controls, and a simple English interface.
 
-Download **Near-1.0.8-windows-x64.zip**, extract it, and run **Near.exe**.
+Download **Near-1.0.9-windows-x64.zip**, extract it, and run **Near.exe**.
 
 **Compatibility:** Windows 10 version 2004 or later / Windows 11, x64, with Bluetooth LE. First-time pairing uses Windows Bluetooth settings. AirPods battery broadcasts are approximate, in 10% steps; case readings update while the case broadcasts. Ear sensing varies by model and firmware. AirPods Pro 3 and AirPods Max detection is included; their ear sensing is not advertised as supported. Real-device testing across every model is still outstanding.
 

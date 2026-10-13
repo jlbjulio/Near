@@ -1,5 +1,8 @@
 use crate::{bluetooth::wait, model::Event};
-use std::sync::mpsc::SyncSender;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    mpsc::SyncSender,
+};
 use windows::{
     Devices::{
         Bluetooth::{BluetoothCacheMode, GenericAttributeProfile::*},
@@ -8,7 +11,12 @@ use windows::{
     Storage::Streams::DataReader,
     core::GUID,
 };
-pub fn read(tx: SyncSender<Event>) {
+static READING: AtomicBool = AtomicBool::new(false);
+/// Reads the standard battery level of `address` only; other devices' readings are never used.
+pub fn read(tx: SyncSender<Event>, address: u64) {
+    if READING.swap(true, Ordering::AcqRel) {
+        return;
+    }
     let result = (|| -> windows::core::Result<()> {
         let selector = GattDeviceService::GetDeviceSelectorFromUuid(GUID::from_u128(
             0x0000180f_0000_1000_8000_00805f9b34fb,
@@ -18,6 +26,10 @@ pub fn read(tx: SyncSender<Event>) {
             let _ = (|| -> windows::core::Result<()> {
                 let service = wait(GattDeviceService::FromIdAsync(&info.Id()?)?, 3)?;
                 let result = (|| -> windows::core::Result<()> {
+                    // Skip other devices before uncached reads wake them over the air.
+                    if service.Device()?.BluetoothAddress()? != address {
+                        return Ok(());
+                    }
                     let chars = wait(
                         service.GetCharacteristicsForUuidWithCacheModeAsync(
                             GUID::from_u128(0x00002a19_0000_1000_8000_00805f9b34fb),
@@ -57,4 +69,5 @@ pub fn read(tx: SyncSender<Event>) {
         Ok(())
     })();
     let _ = result;
+    READING.store(false, Ordering::Release);
 }

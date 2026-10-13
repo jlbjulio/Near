@@ -20,7 +20,8 @@ impl Tray {
             cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
             hWnd: hwnd,
             uID: 1,
-            uFlags: NIF_MESSAGE | NIF_ICON | NIF_TIP,
+            // Version 4 icons hide the standard tooltip unless NIF_SHOWTIP is set.
+            uFlags: NIF_MESSAGE | NIF_ICON | NIF_TIP | NIF_SHOWTIP,
             uCallbackMessage: crate::shell::TRAY,
             hIcon: icon,
             ..Default::default()
@@ -128,14 +129,14 @@ unsafe fn icon(level: Option<u8>, charging: bool) -> windows::core::Result<HICON
             c.ellipse(24., 1., 7., 7., 0xffffffff);
         }
     }
-    // GDI text does not write alpha; fill alpha only inside the opaque rounded surface.
+    // GDI text clears alpha over the GDI+ surface; restore it only where color was drawn,
+    // so the transparent corners outside the rounded badge stay transparent.
     let pixels = std::slice::from_raw_parts_mut(bits.cast::<u32>(), 1024);
-    for y in 0..32 {
-        for x in 0..32 {
-            if (2..30).contains(&x) && (2..30).contains(&y) {
-                pixels[y * 32 + x] |= 0xff000000;
-            }
-        }
+    for p in pixels
+        .iter_mut()
+        .filter(|p| **p >> 24 == 0 && **p & 0xffffff != 0)
+    {
+        *p |= 0xff000000;
     }
     let mask = CreateBitmap(32, 32, 1, 1, None);
     let result = CreateIconIndirect(&ICONINFO {

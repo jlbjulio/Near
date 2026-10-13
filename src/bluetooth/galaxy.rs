@@ -225,8 +225,8 @@ impl Drop for Listener {
                 let _ = s.Close();
             }
         }
-        if let Some(t) = self.thread.take() {
-            let _ = t.join();
-        }
+        // Detach: the thread exits on `stop`, and joining could stall the backend loop
+        // for the length of a pending device or service lookup.
+        drop(self.thread.take());
     }
 }
