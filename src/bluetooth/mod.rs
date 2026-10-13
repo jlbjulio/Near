@@ -11,7 +11,7 @@ use std::{
 use windows::{
     Devices::Bluetooth::Advertisement::*,
     Foundation::TypedEventHandler,
-    Storage::Streams::DataReader,
+    Storage::Streams::{DataReader, DataWriter},
     core::{Error, HRESULT, Result, RuntimeType},
 };
 use windows_future::{AsyncStatus, IAsyncOperation};
@@ -41,6 +41,18 @@ impl Scanner {
     pub fn start(tx: SyncSender<Event>) -> Result<Self> {
         let watcher = BluetoothLEAdvertisementWatcher::new()?;
         watcher.SetScanningMode(BluetoothLEScanningMode::Passive)?;
+        // Let the Bluetooth stack drop everything except Apple proximity-pairing
+        // broadcasts (type 0x07) before they wake this process.
+        let prefix = DataWriter::new()?;
+        prefix.WriteBytes(&[7])?;
+        let apple = BluetoothLEManufacturerData::new()?;
+        apple.SetCompanyId(0x4c)?;
+        apple.SetData(&prefix.DetachBuffer()?)?;
+        watcher
+            .AdvertisementFilter()?
+            .Advertisement()?
+            .ManufacturerData()?
+            .Append(&apple)?;
         let received = watcher.Received(&TypedEventHandler::new(
             move |_: windows::core::Ref<BluetoothLEAdvertisementWatcher>,
                   args: windows::core::Ref<BluetoothLEAdvertisementReceivedEventArgs>| {
