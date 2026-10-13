@@ -136,6 +136,8 @@ struct App {
     taskbar_created: u32,
     combo_stamp: String,
     output_stamp: String,
+    /// Set by `layout`; window_proc paints the page in one pass once App is released.
+    flush: bool,
 }
 pub fn run(
     open: bool,
@@ -143,6 +145,15 @@ pub fn run(
     preview_file: Option<String>,
     preview_state: Option<String>,
 ) -> windows::core::Result<()> {
+    // Previews pick a theme with a "-dark" suffix, e.g. --preview-state=connected-dark.
+    let (preview_state, dark) = match preview_state {
+        Some(s) if preview && s.ends_with("-dark") => {
+            (Some(s.trim_end_matches("-dark").to_string()), true)
+        }
+        s => (s, !preview && system_dark()),
+    };
+    // Brushes must exist before the first control asks for its erase color.
+    set_dark(dark);
     unsafe {
         let _apartment = crate::shell::Apartment::mta();
         let mut token = 0;
@@ -195,9 +206,12 @@ pub fn run(
             taskbar_created: RegisterWindowMessageW(w!("TaskbarCreated")),
             combo_stamp: String::new(),
             output_stamp: String::new(),
+            flush: false,
         }));
         let window = CreateWindowExW(
-            WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED,
+            // COMPOSITED double-buffers the owner-drawn buttons with the page, so a page switch
+            // is presented as one frame instead of control by control.
+            WS_EX_TOOLWINDOW | WS_EX_TOPMOST | WS_EX_LAYERED | WS_EX_COMPOSITED,
             class,
             w!("Near"),
             WS_POPUP | WS_CLIPCHILDREN,
@@ -217,6 +231,11 @@ pub fn run(
             if preview {
                 app.vm = preview_model(preview_state.as_deref());
                 *app.shared.lock().unwrap() = app.vm.clone();
+                app.page = match preview_state.as_deref() {
+                    Some("settings") => 1,
+                    Some("devices") => 2,
+                    _ => 0,
+                };
             }
             app.scale = GetDpiForWindow(window).max(96) as f32 / 96.;
             app.create_controls()?;
@@ -230,9 +249,7 @@ pub fn run(
                 (&corner as *const u32).cast(),
                 4,
             );
-            let color = rgb(LINE).0;
-            let _ =
-                DwmSetWindowAttribute(window, DWMWA_BORDER_COLOR, (&color as *const u32).cast(), 4);
+            app.apply_theme(dark);
             if !preview {
                 app.tray = Some(Tray::new(window)?);
                 let vm = app.vm.clone();
@@ -293,6 +310,27 @@ unsafe extern "system" fn window_proc(
     if message == WM_PRINT {
         return DefWindowProcW(hwnd, message, wparam, lparam);
     }
+    // Theme colors and changes are handled before borrowing App: they can arrive while it is
+    // busy (inside a layout or the tray menu loop), and must never fall back to system white.
+    match message {
+        WM_CTLCOLORBTN => return LRESULT(bg_brush().0 as isize),
+        WM_CTLCOLORLISTBOX if dark() => {
+            let p = palette();
+            let dc = HDC(wparam.0 as *mut _);
+            SetTextColor(dc, rgb(p.ink));
+            SetBkColor(dc, rgb(p.card));
+            return LRESULT(card_brush().0 as isize);
+        }
+        WM_SETTINGCHANGE => {
+            let area = PCWSTR(lparam.0 as *const u16);
+            if !area.is_null() && area.to_string().is_ok_and(|s| s == "ImmersiveColorSet") {
+                // Timer 4 retries until App is free, then stops itself.
+                SetTimer(Some(hwnd), 4, 50, None);
+            }
+            return DefWindowProcW(hwnd, message, wparam, lparam);
+        }
+        _ => {}
+    }
     if message == WM_TIMER && wparam.0 == 9 {
         let _ = KillTimer(Some(hwnd), 9);
         let file = (*cell).borrow().preview_file.clone();
@@ -306,7 +344,7 @@ unsafe extern "system" fn window_proc(
     let Ok(mut app) = (*cell).try_borrow_mut() else {
         return DefWindowProcW(hwnd, message, wparam, lparam);
     };
-    match message {
+    let result = match message {
         WM_TIMER if wparam.0 == 3 => {
             let _ = KillTimer(Some(hwnd), 3);
             let _ = InvalidateRect(Some(hwnd), None, false);
@@ -411,7 +449,17 @@ unsafe extern "system" fn window_proc(
             LRESULT(0)
         }
         _ => DefWindowProcW(hwnd, message, wparam, lparam),
+    };
+    // Paint a re-laid-out page in one synchronous pass, now that WM_PAINT and WM_DRAWITEM can
+    // borrow App, so no composed frame shows the page half old and half new.
+    let flush = std::mem::take(&mut app.flush);
+    drop(app);
+    if flush && IsWindowVisible(hwnd).as_bool() {
+        // Start right after a composition pass so the whole repaint lands in one frame.
+        let _ = DwmFlush();
+        let _ = RedrawWindow(Some(hwnd), None, None, RDW_UPDATENOW | RDW_ALLCHILDREN);
     }
+    result
 }
 impl App {
     unsafe fn f(&mut self, size: i32, bold: bool) -> HFONT {
@@ -421,6 +469,43 @@ impl App {
         let f = font(self.scale, size, bold);
         self.fonts.insert((size, bold), f);
         f
+    }
+    /// Applies the palette to the window frame, native dropdowns, and menus, then repaints.
+    unsafe fn apply_theme(&mut self, dark: bool) {
+        set_dark(dark);
+        let p = palette();
+        let on = BOOL::from(dark);
+        let _ = DwmSetWindowAttribute(
+            self.hwnd,
+            DWMWA_USE_IMMERSIVE_DARK_MODE,
+            (&on as *const BOOL).cast(),
+            4,
+        );
+        let border = rgb(p.line).0;
+        let _ = DwmSetWindowAttribute(
+            self.hwnd,
+            DWMWA_BORDER_COLOR,
+            (&border as *const u32).cast(),
+            4,
+        );
+        for c in self.controls.iter().filter(|c| c.combo) {
+            let _ = SetWindowTheme(
+                c.window,
+                if dark {
+                    w!("DarkMode_CFD")
+                } else {
+                    PCWSTR::null()
+                },
+                PCWSTR::null(),
+            );
+        }
+        allow_dark_menus(self.hwnd, dark);
+        let _ = RedrawWindow(
+            Some(self.hwnd),
+            None,
+            None,
+            RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_FRAME,
+        );
     }
     unsafe fn clear_fonts(&mut self) {
         for (_, f) in self.fonts.drain() {
@@ -504,10 +589,17 @@ impl App {
             0,
             (WIDTH * s).round() as i32,
             (height * s).round() as i32,
-            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE,
+            SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW,
         );
+        // Move, restyle, and swap controls without painting any of them, then repaint the
+        // whole page once after this message returns (see `flush` in window_proc). Painting
+        // here would re-enter while App is borrowed and leave owner-drawn buttons blank.
         for control in &self.controls {
             let [x, y, w, h] = control.rect;
+            let visible = (control.page == 255
+                || control.page == 254 && self.page != 0
+                || control.page == self.page)
+                && (control.id != 10 || self.vm.connection_action().is_some());
             let _ = SetWindowPos(
                 control.window,
                 None,
@@ -515,30 +607,33 @@ impl App {
                 (y * s).round() as i32,
                 (w * s).round() as i32,
                 (h * s).round() as i32,
-                SWP_NOZORDER | SWP_NOACTIVATE,
+                SWP_NOZORDER | SWP_NOACTIVATE | SWP_NOREDRAW,
             );
-            send(control.window, WM_SETFONT, WPARAM(f.0 as usize), LPARAM(1));
-            if control.combo {
-                send(
-                    control.window,
-                    CB_SETITEMHEIGHT,
-                    WPARAM(usize::MAX),
-                    LPARAM((24. * s) as isize),
-                );
-                send(
-                    control.window,
-                    CB_SETITEMHEIGHT,
-                    WPARAM(0),
-                    LPARAM((24. * s) as isize),
-                );
-            }
-            let visible = (control.page == 255
-                || control.page == 254 && self.page != 0
-                || control.page == self.page)
-                && (control.id != 10 || self.vm.connection_action().is_some());
+            // Visibility uses ShowWindow: SWP_SHOWWINDOW with SWP_NOREDRAW leaves stale controls.
             let _ = ShowWindow(control.window, if visible { SW_SHOWNA } else { SW_HIDE });
+            send(control.window, WM_SETFONT, WPARAM(f.0 as usize), LPARAM(0));
+            if control.combo {
+                // Setting the height resizes and repaints the combo, so only do it when it changes.
+                let item = (24. * s) as isize;
+                for index in [usize::MAX, 0] {
+                    if send(control.window, CB_GETITEMHEIGHT, WPARAM(index), LPARAM(0)).0 != item {
+                        send(
+                            control.window,
+                            CB_SETITEMHEIGHT,
+                            WPARAM(index),
+                            LPARAM(item),
+                        );
+                    }
+                }
+            }
         }
-        let _ = InvalidateRect(Some(self.hwnd), None, false);
+        let _ = RedrawWindow(
+            Some(self.hwnd),
+            None,
+            None,
+            RDW_INVALIDATE | RDW_ALLCHILDREN,
+        );
+        self.flush = true;
     }
     unsafe fn update(&mut self) {
         if let Ok(v) = self.shared.lock() {
@@ -903,6 +998,13 @@ impl App {
         }
     }
     unsafe fn timer(&mut self, id: usize) {
+        if id == 4 {
+            let _ = KillTimer(Some(self.hwnd), 4);
+            if !self.preview && system_dark() != dark() {
+                self.apply_theme(system_dark());
+            }
+            return;
+        }
         if id == 1 {
             if let Some(a) = &self.animation {
                 let fraction = (a.start.elapsed().as_secs_f32() / 0.19).min(1.);
@@ -1057,14 +1159,13 @@ impl App {
         let title = self.f(17, true);
         // Fill edge to edge: DWM rounds the window itself on Windows 11, and a painted
         // rounded rect would leave dark buffer pixels in the corners.
+        let p = palette();
         let mut bounds = RECT::default();
         let _ = GetClientRect(self.hwnd, &mut bounds);
-        let background = CreateSolidBrush(rgb(BG));
-        FillRect(dc, &bounds, background);
-        let _ = DeleteObject(HGDIOBJ(background.0));
+        FillRect(dc, &bounds, bg_brush());
         let c = Canvas::new(dc, self.scale);
         c.logo(20., 14., 22.);
-        c.text("near", 50., 12., 110., 26., medium, INK, false);
+        c.text("near", 50., 12., 110., 26., medium, p.ink, false);
         if self.page != 0 {
             c.text(
                 if self.page == 1 {
@@ -1077,12 +1178,12 @@ impl App {
                 220.,
                 30.,
                 title,
-                INK,
+                p.ink,
                 false,
             );
         }
         if self.page == 0 {
-            c.text(&self.vm.name, 20., 53., 211., 28., title, INK, false);
+            c.text(&self.vm.name, 20., 53., 211., 28., title, p.ink, false);
             c.text(
                 &self.vm.state,
                 20.,
@@ -1091,14 +1192,14 @@ impl App {
                 20.,
                 normal,
                 if self.vm.chosen.as_ref().is_some_and(|p| p.connected) {
-                    ACCENT
+                    p.highlight
                 } else {
-                    MUTED
+                    p.muted
                 },
                 false,
             );
             c.artwork(246., 54., 0.54, is_max(self.vm.model));
-            c.round(20., 120., 280., 78., 10., 0xffffffff);
+            c.round(20., 120., 280., 78., 10., p.card);
             for i in 0..3 {
                 let x = 32. + i as f32 * 91.;
                 let label = if is_max(self.vm.model) && i == 0 {
@@ -1106,48 +1207,84 @@ impl App {
                 } else {
                     ["Left", "Right", "Case"][i]
                 };
-                c.text(label, x, 129., 80., 18., small, MUTED, false);
+                // "Headphones" (AirPods Max) is wider than the bolt slot, so its bolt moves past it.
+                let bolt_x = if is_max(self.vm.model) && i == 0 {
+                    x + 74.
+                } else {
+                    x + 63.
+                };
+                c.text(label, x, 129., bolt_x - x - 2., 18., small, p.muted, false);
+                c.round(x, 187., 70., 3., 1.5, p.line);
+                let Some(sample) = self.vm.batteries.parts[i] else {
+                    c.text("—", x, 149., 80., 29., large, p.ink, false);
+                    continue;
+                };
+                // The bar always shows the level; a bolt marks charging so the layout never swaps.
+                let charging = sample.charging == Some(true);
+                let low = sample.level <= 20 && !charging;
+                let tone = if low { p.warn } else { p.highlight };
+                if charging {
+                    c.bolt(bolt_x, 132., 11., p.highlight);
+                }
+                // 10% steps are approximate; a small mark keeps the number itself in focus.
+                let number_x = if self.vm.batteries.approximate {
+                    c.text("≈", x, 152., 12., 26., normal, p.muted, false);
+                    x + 11.
+                } else {
+                    x
+                };
                 c.text(
-                    &self.vm.batteries.value(i),
-                    x,
+                    &format!("{}%", sample.level),
+                    number_x,
                     149.,
                     80.,
                     29.,
                     large,
-                    INK,
+                    if low { p.warn } else { p.ink },
                     false,
                 );
-                if self.vm.batteries.parts[i].is_some_and(|s| s.charging == Some(true)) {
-                    c.text("Charging", x, 179., 80., 16., small, ACCENT, false);
-                } else {
-                    c.round(x, 187., 70., 3., 1.5, LINE);
-                    if let Some(sample) = self.vm.batteries.parts[i] {
-                        c.round(
-                            x,
-                            187.,
-                            (70. * sample.level as f32 / 100.).max(3.),
-                            3.,
-                            1.5,
-                            ACCENT,
-                        );
-                    }
-                }
+                c.round(
+                    x,
+                    187.,
+                    (70. * sample.level as f32 / 100.).max(3.),
+                    3.,
+                    1.5,
+                    tone,
+                );
             }
             let warning = format!("Low battery · {}", self.vm.alert);
-            let helper = if !self.vm.message.is_empty() && self.vm.message != "Connecting…" {
-                &self.vm.message
-            } else if self.vm.preferences.low_battery && now() < self.battery_notice_until {
+            let warned = (self.vm.message.is_empty() || self.vm.message == "Connecting…")
+                && self.vm.preferences.low_battery
+                && now() < self.battery_notice_until;
+            let helper = if warned {
                 &warning
+            } else if !self.vm.message.is_empty() && self.vm.message != "Connecting…" {
+                &self.vm.message
             } else {
                 &self.vm.note
             };
-            c.wrapped(helper, [20., 208., 280., 36.], normal, MUTED);
-            let media_title = if self.vm.media.title.is_empty() {
+            c.wrapped(
+                helper,
+                [20., 208., 280., 36.],
+                normal,
+                if warned { p.warn } else { p.muted },
+            );
+            let idle = self.vm.media.title.is_empty();
+            let media_title = if idle {
                 "Nothing playing"
             } else {
                 &self.vm.media.title
             };
-            c.text(media_title, 20., 254., 169., 18., normal, INK, false);
+            c.text(
+                media_title,
+                20.,
+                254.,
+                169.,
+                18.,
+                normal,
+                if idle { p.muted } else { p.ink },
+                false,
+            );
             c.text(
                 &self.vm.media.artist,
                 20.,
@@ -1155,11 +1292,20 @@ impl App {
                 169.,
                 16.,
                 small,
-                MUTED,
+                p.muted,
                 false,
             );
         } else if self.page == 2 {
-            c.text("Your headphones", 20., 90., 280., 18., small, MUTED, false);
+            c.text(
+                "Your headphones",
+                20.,
+                90.,
+                280.,
+                18.,
+                small,
+                p.muted,
+                false,
+            );
             c.text(
                 "Automatic switching",
                 20.,
@@ -1167,10 +1313,10 @@ impl App {
                 280.,
                 20.,
                 normal,
-                INK,
+                p.ink,
                 false,
             );
-            c.text("Speakers", 20., 225., 280., 16., small, MUTED, false);
+            c.text("Speakers", 20., 225., 280., 16., small, p.muted, false);
             c.wrapped(
                 if self.vm.paired.is_empty() {
                     "Pair your headphones in Bluetooth settings first."
@@ -1179,7 +1325,7 @@ impl App {
                 },
                 [20., 289., 280., 36.],
                 normal,
-                MUTED,
+                p.muted,
             );
         }
     }
@@ -1191,12 +1337,15 @@ impl App {
         let label = control.label.clone();
         let [_, _, w, h] = control.rect;
         let f = self.f(12, false);
+        let p = palette();
+        // A plain GDI fill: anti-aliased edges would blend with the control's initial white.
+        FillRect(item.hDC, &item.rcItem, bg_brush());
         let c = Canvas::new(item.hDC, self.scale);
-        c.round(0., 0., w, h, 0.1, BG);
         let focus = item.itemState.0 & ODS_FOCUS.0 != 0;
         let pressed = item.itemState.0 & ODS_SELECTED.0 != 0;
         let disabled = item.itemState.0 & ODS_DISABLED.0 != 0;
-        let ink = if disabled { MUTED } else { INK };
+        // Disabled button labels stay readable; only idle media icons fade further.
+        let ink = if disabled { p.muted } else { p.ink };
         if (30..=35).contains(&id) {
             let enabled = match id {
                 30 => shell::startup::enabled(),
@@ -1206,14 +1355,14 @@ impl App {
                 34 => self.vm.preferences.ear_detection,
                 _ => self.vm.preferences.speaker_switch,
             };
-            c.text(&label, 0., 0., w - 48., h, f, INK, false);
+            c.text(&label, 0., 0., w - 48., h, f, p.ink, false);
             c.round(
                 w - 32.,
                 7.,
                 32.,
                 18.,
                 9.,
-                if enabled { ACCENT } else { 0xff788780 },
+                if enabled { p.accent } else { p.off },
             );
             c.ellipse(
                 w - 29. + if enabled { 14. } else { 0. },
@@ -1224,11 +1373,11 @@ impl App {
             );
         } else if id == 1 || id == 2 || id == 3 {
             if pressed || focus {
-                c.round(0., 0., w, h, 7., LINE);
+                c.round(0., 0., w, h, 7., p.line);
             }
             let (x, y) = (w / 2., h / 2.);
             if id == 1 {
-                c.ring(x - 5., y - 5., 10., 1.4, MUTED);
+                c.ring(x - 5., y - 5., 10., 1.4, p.muted);
                 for i in 0..8 {
                     let angle = i as f32 * std::f32::consts::FRAC_PI_4;
                     c.line(
@@ -1237,20 +1386,22 @@ impl App {
                         x + angle.cos() * 8.,
                         y + angle.sin() * 8.,
                         1.4,
-                        MUTED,
+                        p.muted,
                     );
                 }
-                c.ring(x - 1.5, y - 1.5, 3., 1.2, MUTED);
+                c.ring(x - 1.5, y - 1.5, 3., 1.2, p.muted);
             } else if id == 2 {
-                c.line(x - 4., y - 4., x + 4., y + 4., 1.4, MUTED);
-                c.line(x + 4., y - 4., x - 4., y + 4., 1.4, MUTED);
+                c.line(x - 4., y - 4., x + 4., y + 4., 1.4, p.muted);
+                c.line(x + 4., y - 4., x - 4., y + 4., 1.4, p.muted);
             } else {
-                c.line(x + 2., y - 5., x - 3., y, 1.5, MUTED);
-                c.line(x - 3., y, x + 2., y + 5., 1.5, MUTED);
+                c.line(x + 2., y - 5., x - 3., y, 1.5, p.muted);
+                c.line(x - 3., y, x + 2., y + 5., 1.5, p.muted);
             }
         } else if id == 20 || id == 21 || id == 22 {
-            if id == 21 || pressed || focus {
-                c.round(0., 3., w, h - 6., 8., LINE);
+            let ink = if disabled { p.faint } else { p.ink };
+            // The play pill marks the main control only while there is something to play.
+            if id == 21 && !disabled || pressed || focus {
+                c.round(0., 3., w, h - 6., 8., p.line);
             }
             let (x, y) = (w / 2., h / 2.);
             if id == 21 && self.vm.media.playing {
@@ -1282,15 +1433,15 @@ impl App {
                 && !self.vm.disconnecting
                 && !self.vm.chosen.as_ref().is_some_and(|p| p.connected);
             let color = if primary && !disabled {
-                if pressed { 0xff194b40 } else { ACCENT }
+                if pressed { p.pressed } else { p.accent }
             } else if id == 11 || id == 90 {
-                BG
+                p.bg
             } else {
-                LINE
+                p.line
             };
             c.round(0., 0., w, h, 8., color);
             if id == 10 && !primary {
-                c.round(1., 1., w - 2., h - 2., 7., BG);
+                c.round(1., 1., w - 2., h - 2., 7., p.bg);
             }
             let text = if id == 10 {
                 self.vm
@@ -1327,10 +1478,76 @@ impl App {
         }
     }
 }
+/// Lets the tray menu follow the Windows app theme. These uxtheme ordinals are undocumented
+/// but stable since Windows 10 1809 (Near requires 2004): 135 SetPreferredAppMode,
+/// 133 AllowDarkModeForWindow, 104 RefreshImmersiveColorPolicyState, 136 FlushMenuThemes.
+/// Missing exports are skipped.
+unsafe fn allow_dark_menus(hwnd: HWND, dark: bool) {
+    // The ordinals only have these meanings from 1903 (build 18362); older builds keep light menus.
+    if windows_build() < 18362 {
+        return;
+    }
+    // Already loaded through the SetWindowTheme import; no extra reference to release.
+    let Ok(uxtheme) = GetModuleHandleW(w!("uxtheme.dll")) else {
+        return;
+    };
+    let ordinal = |n: usize| GetProcAddress(uxtheme, windows::core::PCSTR(n as *const u8));
+    if let Some(f) = ordinal(135) {
+        let set_preferred_app_mode: unsafe extern "system" fn(i32) -> i32 = std::mem::transmute(f);
+        set_preferred_app_mode(1);
+    }
+    if let Some(f) = ordinal(133) {
+        let allow_for_window: unsafe extern "system" fn(HWND, BOOL) -> BOOL =
+            std::mem::transmute(f);
+        let _ = allow_for_window(hwnd, dark.into());
+    }
+    // 104 RefreshImmersiveColorPolicyState: drops the cached mode so a live switch reaches menus.
+    if let Some(f) = ordinal(104) {
+        let refresh_policy: unsafe extern "system" fn() = std::mem::transmute(f);
+        refresh_policy();
+    }
+    if let Some(f) = ordinal(136) {
+        let flush_menu_themes: unsafe extern "system" fn() = std::mem::transmute(f);
+        flush_menu_themes();
+    }
+}
+/// Real Windows build number; GetVersionEx reports a compatibility version instead.
+unsafe fn windows_build() -> u32 {
+    #[repr(C)]
+    struct VersionInfo {
+        size: u32,
+        major: u32,
+        minor: u32,
+        build: u32,
+        platform: u32,
+        service_pack: [u16; 128],
+    }
+    let Ok(ntdll) = GetModuleHandleW(w!("ntdll.dll")) else {
+        return 0;
+    };
+    let Some(f) = GetProcAddress(ntdll, windows::core::s!("RtlGetVersion")) else {
+        return 0;
+    };
+    let rtl_get_version: unsafe extern "system" fn(*mut VersionInfo) -> i32 =
+        std::mem::transmute(f);
+    let mut info = VersionInfo {
+        size: std::mem::size_of::<VersionInfo>() as u32,
+        major: 0,
+        minor: 0,
+        build: 0,
+        platform: 0,
+        service_pack: [0; 128],
+    };
+    if rtl_get_version(&mut info) == 0 {
+        info.build
+    } else {
+        0
+    }
+}
 unsafe fn capture_window(hwnd: HWND, file: &str) {
-    let scale = GetDpiForWindow(hwnd).max(96) as f32 / 96.;
-    let w = (WIDTH * scale) as i32;
-    let h = (HEIGHT * scale) as i32;
+    let mut bounds = RECT::default();
+    let _ = GetClientRect(hwnd, &mut bounds);
+    let (w, h) = (bounds.right, bounds.bottom);
     let screen = GetDC(Some(hwnd));
     let dc = CreateCompatibleDC(Some(screen));
     let mut bits = std::ptr::null_mut();

@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use windows::{
     Win32::{
         Foundation::*,
@@ -5,11 +6,110 @@ use windows::{
     },
     core::{PCWSTR, w},
 };
-pub const BG: u32 = 0xfff7f8f6;
-pub const INK: u32 = 0xff182c29;
-pub const MUTED: u32 = 0xff566862;
-pub const ACCENT: u32 = 0xff236759;
-pub const LINE: u32 = 0xffdee5e0;
+/// Brand green for the logo and tray badge, which keep one color in both themes.
+pub const BRAND: u32 = 0xff236759;
+#[derive(Clone, Copy)]
+pub struct Palette {
+    pub bg: u32,
+    pub card: u32,
+    pub ink: u32,
+    pub muted: u32,
+    /// Disabled icons; WCAG exempts inactive controls from text contrast.
+    pub faint: u32,
+    /// Filled buttons and enabled toggles, under white text.
+    pub accent: u32,
+    pub pressed: u32,
+    /// Accent text and battery bars on the page background.
+    pub highlight: u32,
+    pub line: u32,
+    pub off: u32,
+    /// Low battery: the one warm color, reserved for levels at or below 20%.
+    pub warn: u32,
+}
+const LIGHT: Palette = Palette {
+    bg: 0xfff7f8f6,
+    card: 0xffffffff,
+    ink: 0xff182c29,
+    muted: 0xff566862,
+    faint: 0xffa9b5af,
+    accent: BRAND,
+    pressed: 0xff194b40,
+    highlight: BRAND,
+    line: 0xffdee5e0,
+    off: 0xff788780,
+    warn: 0xffa8500e,
+};
+const DARK: Palette = Palette {
+    bg: 0xff1b211f,
+    card: 0xff252d2a,
+    ink: 0xffe7eeea,
+    muted: 0xffa1b0aa,
+    faint: 0xff5f6d68,
+    accent: 0xff2e7766,
+    pressed: 0xff245e51,
+    highlight: 0xff6cc0a7,
+    line: 0xff343e3a,
+    off: 0xff6b7a75,
+    warn: 0xfff2a65a,
+};
+static DARK_THEME: AtomicBool = AtomicBool::new(false);
+// Theme brushes live for the whole process; window messages read them without borrowing App.
+static BG_BRUSH: AtomicIsize = AtomicIsize::new(0);
+static CARD_BRUSH: AtomicIsize = AtomicIsize::new(0);
+pub fn palette() -> &'static Palette {
+    if dark() { &DARK } else { &LIGHT }
+}
+/// Page background, also used to erase owner-drawn buttons instead of the system's white.
+pub fn bg_brush() -> HBRUSH {
+    HBRUSH(BG_BRUSH.load(Ordering::Relaxed) as *mut _)
+}
+/// Dropdown list background on the dark theme.
+pub fn card_brush() -> HBRUSH {
+    HBRUSH(CARD_BRUSH.load(Ordering::Relaxed) as *mut _)
+}
+/// Softens the white headphone artwork on the dark theme so the battery numbers stay the focus.
+fn tone(color: u32) -> u32 {
+    if !dark() {
+        return color;
+    }
+    let channel = |shift: u32| ((((color >> shift) & 0xff) * 4 / 5) & 0xff) << shift;
+    0xff000000 | channel(16) | channel(8) | channel(0)
+}
+pub fn set_dark(dark: bool) {
+    DARK_THEME.store(dark, Ordering::Relaxed);
+    let p = palette();
+    for (slot, color) in [(&BG_BRUSH, p.bg), (&CARD_BRUSH, p.card)] {
+        let brush = unsafe { CreateSolidBrush(rgb(color)) };
+        let old = slot.swap(brush.0 as isize, Ordering::Relaxed);
+        if old != 0 {
+            unsafe {
+                let _ = DeleteObject(HGDIOBJ(old as *mut _));
+            }
+        }
+    }
+}
+pub fn dark() -> bool {
+    DARK_THEME.load(Ordering::Relaxed)
+}
+/// Follows Settings > Personalization > Colors > "Choose your app mode".
+pub fn system_dark() -> bool {
+    use windows::Win32::System::Registry::*;
+    let mut value = 1u32;
+    let mut size = 4u32;
+    unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            w!("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize"),
+            w!("AppsUseLightTheme"),
+            RRF_RT_REG_DWORD,
+            None,
+            Some((&mut value as *mut u32).cast()),
+            Some(&mut size),
+        )
+        .is_ok()
+            && value == 0
+    }
+}
 pub struct Canvas {
     g: *mut GpGraphics,
     pub scale: f32,
@@ -89,12 +189,31 @@ impl Canvas {
         }
     }
     pub fn triangle(&self, points: [(f32, f32); 3], color: u32) {
+        self.polygon(&points, color);
+    }
+    /// Charging mark: a bolt `h` tall with its top-left at (x, y).
+    pub fn bolt(&self, x: f32, y: f32, h: f32, color: u32) {
+        let k = h / 12.;
+        let p = |a: f32, b: f32| (x + a * k, y + b * k);
+        self.polygon(
+            &[
+                p(5., 0.),
+                p(0.5, 7.),
+                p(3.6, 7.),
+                p(2.6, 12.),
+                p(7.5, 4.8),
+                p(4.4, 4.8),
+            ],
+            color,
+        );
+    }
+    pub fn polygon(&self, points: &[(f32, f32)], color: u32) {
         unsafe {
             let mut path = std::ptr::null_mut();
             GdipCreatePath(FillModeAlternate, &mut path);
-            for i in 0..3 {
+            for i in 0..points.len() {
                 let a = points[i];
-                let b = points[(i + 1) % 3];
+                let b = points[(i + 1) % points.len()];
                 GdipAddPathLine(
                     path,
                     a.0 * self.scale,
@@ -174,7 +293,7 @@ impl Canvas {
         }
     }
     pub fn logo(&self, x: f32, y: f32, size: f32) {
-        self.round(x, y, size, size, size * 0.28, ACCENT);
+        self.round(x, y, size, size, size * 0.28, BRAND);
         let k = size / 32.;
         self.ellipse(x + 7. * k, y + 7. * k, 9. * k, 9. * k, 0xffffffff);
         self.round(
@@ -194,8 +313,8 @@ impl Canvas {
             2. * k,
             0xffffffff,
         );
-        self.ellipse(x + 8. * k, y + 9. * k, 3. * k, 4. * k, ACCENT);
-        self.ellipse(x + 22. * k, y + 8. * k, 2. * k, 3. * k, ACCENT);
+        self.ellipse(x + 8. * k, y + 9. * k, 3. * k, 4. * k, BRAND);
+        self.ellipse(x + 22. * k, y + 8. * k, 2. * k, 3. * k, BRAND);
     }
     pub fn artwork(&self, x: f32, y: f32, scale: f32, max: bool) {
         let k = scale;
@@ -206,16 +325,23 @@ impl Canvas {
                 64. * k,
                 54. * k,
                 25. * k,
-                0xffc6d4cd,
+                tone(0xffc6d4cd),
             );
-            self.round(x + 17. * k, y + 12. * k, 54. * k, 48. * k, 22. * k, BG);
+            self.round(
+                x + 17. * k,
+                y + 12. * k,
+                54. * k,
+                48. * k,
+                22. * k,
+                palette().bg,
+            );
             self.round(
                 x + 4. * k,
                 y + 32. * k,
                 24. * k,
                 42. * k,
                 10. * k,
-                0xffcbd6d0,
+                tone(0xffcbd6d0),
             );
             self.round(
                 x + 60. * k,
@@ -223,7 +349,7 @@ impl Canvas {
                 24. * k,
                 42. * k,
                 10. * k,
-                0xffcbd6d0,
+                tone(0xffcbd6d0),
             );
             self.round(
                 x + 9. * k,
@@ -231,7 +357,7 @@ impl Canvas {
                 14. * k,
                 34. * k,
                 7. * k,
-                0xffecf0ed,
+                tone(0xffecf0ed),
             );
             self.round(
                 x + 65. * k,
@@ -239,20 +365,32 @@ impl Canvas {
                 14. * k,
                 34. * k,
                 7. * k,
-                0xffecf0ed,
+                tone(0xffecf0ed),
             );
             return;
         }
         for (dx, dy, mirror) in [(18., 4., false), (61., 0., true)] {
-            self.ellipse(x + (dx - 2.) * k, y + dy * k, 30. * k, 27. * k, 0xffdbe2df);
-            self.ellipse(x + dx * k, y + (dy + 1.) * k, 26. * k, 23. * k, 0xffffffff);
+            self.ellipse(
+                x + (dx - 2.) * k,
+                y + dy * k,
+                30. * k,
+                27. * k,
+                tone(0xffdbe2df),
+            );
+            self.ellipse(
+                x + dx * k,
+                y + (dy + 1.) * k,
+                26. * k,
+                23. * k,
+                tone(0xffffffff),
+            );
             self.round(
                 x + (dx + if mirror { 1. } else { 16. }) * k,
                 y + (dy + 13.) * k,
                 8. * k,
                 44. * k,
                 4. * k,
-                0xffdbe2df,
+                tone(0xffdbe2df),
             );
             self.round(
                 x + (dx + if mirror { 2. } else { 17. }) * k,
@@ -260,14 +398,14 @@ impl Canvas {
                 6. * k,
                 43. * k,
                 3. * k,
-                0xffffffff,
+                tone(0xffffffff),
             );
             self.ellipse(
                 x + (dx + if mirror { 18. } else { 4. }) * k,
                 y + (dy + 7.) * k,
                 5. * k,
                 8. * k,
-                0xff253d36,
+                tone(0xff253d36),
             );
             self.line(
                 x + (dx + if mirror { 4. } else { 19. }) * k,
@@ -275,7 +413,7 @@ impl Canvas {
                 x + (dx + if mirror { 7. } else { 22. }) * k,
                 y + (dy + 47.) * k,
                 1.,
-                0xffc5d0ca,
+                tone(0xffc5d0ca),
             );
         }
         self.round(
@@ -284,7 +422,7 @@ impl Canvas {
             52. * k,
             35. * k,
             13. * k,
-            0xffdbe2df,
+            tone(0xffdbe2df),
         );
         self.round(
             x + 25. * k,
@@ -292,7 +430,7 @@ impl Canvas {
             50. * k,
             32. * k,
             12. * k,
-            0xffffffff,
+            tone(0xffffffff),
         );
         self.line(
             x + 27. * k,
@@ -300,9 +438,9 @@ impl Canvas {
             x + 73. * k,
             y + 75. * k,
             0.7,
-            0xffdbe2df,
+            tone(0xffdbe2df),
         );
-        self.ellipse(x + 49. * k, y + 81. * k, 2. * k, 2. * k, ACCENT);
+        self.ellipse(x + 49. * k, y + 81. * k, 2. * k, 2. * k, BRAND);
     }
 }
 impl Drop for Canvas {

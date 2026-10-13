@@ -1,7 +1,12 @@
-## Near 1.0.9
+## Near 1.0.10
 
 A quiet AirPods companion for Windows, written in Rust.
 
+- Dark mode: Near follows the Windows app theme and switches live, including the flyout, settings, dropdowns, and tray menu.
+- Battery bars always show the level; a small bolt marks charging instead of replacing the bar.
+- Levels at 20% or below turn orange when not charging.
+- Switching between the main view, Settings, and Devices no longer flickers.
+- Playback controls dim when nothing is playing, and the approximate mark sits quietly beside each number.
 - The case-opening popup now appears reliably; most openings were previously missed.
 - Hovering the tray icon shows left, right, and case battery again.
 - Cleaner tray icon and flyout corners, with no dark pixels at the edges.
@@ -25,7 +30,7 @@ A quiet AirPods companion for Windows, written in Rust.
 - A movable flyout that opens or focuses when you click the tray icon.
 - Consistent Segoe UI Variable typography on Windows 11, vector playback controls, and a simple English interface.
 
-Download **Near-1.0.9-windows-x64.zip**, extract it, and run **Near.exe**.
+Download **Near-1.0.10-windows-x64.zip**, extract it, and run **Near.exe**.
 
 **Compatibility:** Windows 10 version 2004 or later / Windows 11, x64, with Bluetooth LE. First-time pairing uses Windows Bluetooth settings. AirPods battery broadcasts are approximate, in 10% steps; case readings update while the case broadcasts. Ear sensing varies by model and firmware. AirPods Pro 3 and AirPods Max detection is included; their ear sensing is not advertised as supported. Real-device testing across every model is still outstanding.
 

@@ -118,7 +118,7 @@ unsafe fn icon(level: Option<u8>, charging: bool) -> windows::core::Result<HICON
     {
         let c = Canvas::new(dc, 1.);
         if let Some(level) = level {
-            c.round(1., 1., 30., 30., 8., crate::ui::paint::ACCENT);
+            c.round(1., 1., 30., 30., 8., crate::ui::paint::BRAND);
             let f = font(1., if level == 100 { 16 } else { 21 }, true);
             c.text(&level.to_string(), 0., 0., 32., 30., f, 0xffffffff, true);
             let _ = DeleteObject(HGDIOBJ(f.0));

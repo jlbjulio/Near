@@ -16,6 +16,7 @@ Your AirPods, right here on Windows. A small, free companion that lives in your 
 - **Simple playback controls.** Play, pause, and skip without opening your music app.
 - **Low battery popup.** A brief, silent reminder at 10%, once until the battery charges or recovers.
 - **Ready at startup.** Enable Start with Windows once and leave Near in the tray.
+- **Light or dark.** Near follows your Windows app theme and switches when you change it.
 
 No account, subscription, background web browser, or custom driver. Everything stays on your PC.
 
