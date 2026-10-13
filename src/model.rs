@@ -102,6 +102,8 @@ pub struct Reading {
     pub charging: [Option<bool>; 3],
     pub ears: [Option<bool>; 2],
     pub lid: Option<bool>,
+    /// Both earbuds report being in the case.
+    pub cased: bool,
     pub approximate: bool,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
@@ -379,6 +381,7 @@ mod tests {
             charging: [Some(true), None, None],
             ears: [None; 2],
             lid: None,
+            cased: false,
             approximate: true,
         };
         b.remember(&r);

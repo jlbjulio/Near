@@ -10,7 +10,7 @@ Your AirPods, right here on Windows. A small, free companion that lives in your 
 
 - **Battery at a glance.** Left, right, and case levels, with charging indicators and a tray percentage.
 - **A familiar little popup.** Open your case and get a clean battery view. It fades away when you are done.
-- **Connect automatically.** Near reconnects paired headphones when detected nearby. Choose Disconnect to keep them disconnected until you choose Connect again.
+- **Connect automatically.** Near reconnects paired headphones when you take an earbud out of the case nearby; opening the case alone just shows battery. Choose Disconnect to keep them disconnected until you choose Connect again.
 - **Automatic pause.** Pause when you remove an earbud; resume playback Near paused when you put it back.
 - **Audio that follows your setup.** Automatic switching for directly selected AirPods. SteelSeries Sonar and other virtual mixers keep control of their routes.
 - **Simple playback controls.** Play, pause, and skip without opening your music app.
@@ -25,7 +25,7 @@ Battery is shown in Near and the system tray. Windows widgets and live tiles are
 
 1. Download the Windows release, extract the ZIP, and run **Near.exe**.
 2. Pair your AirPods with this PC in **Windows Bluetooth settings** once. AirPods 4 and AirPods Pro 3 use a double-tap on the front of the open case to enter pairing mode; older cases use the setup button.
-3. Click the Near icon beside the clock. Open your case to see battery updates. Near reconnects your paired AirPods when they are detected nearby.
+3. Click the Near icon beside the clock. Open your case to see battery updates. Near reconnects your paired AirPods when you take one out of the case.
 
 Clicking the tray icon opens or focuses Near. Drag the flyout by its header, or press Escape or click outside to dismiss it. Settings lets you choose automatic playback, automatic switching, alerts, animations, and startup.
 

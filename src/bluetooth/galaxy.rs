@@ -87,6 +87,7 @@ pub fn parse(frame: &[u8], legacy: bool, address: u64, name: &str) -> Option<Rea
         charging,
         ears,
         lid: None,
+        cased: false,
         approximate: false,
     })
 }

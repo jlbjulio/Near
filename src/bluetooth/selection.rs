@@ -59,6 +59,8 @@ pub fn select(paired: Option<&Paired>, fresh: &[Reading]) -> Selection {
         }
         merged.at = merged.at.max(other.at);
         merged.signal = merged.signal.max(other.signal);
+        // Any recent frame with an earbud out of the case counts.
+        merged.cased &= other.cased;
         if merged.lid != other.lid {
             merged.lid = None;
         }
@@ -86,6 +88,7 @@ mod tests {
             charging: [Some(false); 3],
             ears: [Some(true); 2],
             lid: None,
+            cased: false,
             approximate: true,
         }
     }
@@ -94,6 +97,21 @@ mod tests {
             address: 99,
             model: Some(0x201b),
             ..Default::default()
+        }
+    }
+    #[test]
+    fn any_earbud_out_of_the_case_clears_the_merged_case_state() {
+        let mut cased = reading(1, 10_000);
+        cased.cased = true;
+        let mut other = reading(2, 10_100);
+        other.cased = true;
+        let both = select(Some(&paired()), &[cased.clone(), other.clone()]);
+        assert!(both.reading.unwrap().cased);
+        for order in [
+            [cased.clone(), reading(2, 10_100)],
+            [reading(2, 10_100), cased.clone()],
+        ] {
+            assert!(!select(Some(&paired()), &order).reading.unwrap().cased);
         }
     }
     #[test]

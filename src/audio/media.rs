@@ -223,6 +223,7 @@ mod tests {
             charging: [None; 3],
             ears,
             lid: None,
+            cased: false,
             approximate: true,
         }
     }

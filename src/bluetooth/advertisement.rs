@@ -75,6 +75,8 @@ pub fn parse(bytes: &[u8], address: u64, signal: i16, at: u64) -> Option<Reading
             id,
             0x2002 | 0x200F | 0x2013 | 0x200E | 0x2014 | 0x2024 | 0x2019 | 0x201B | 0x200B
         );
+        // Headphones without a case (Max, Solo, Studio, Flex) never report one.
+        let dual_case = dual || id == 0x2027;
         let mut ears = [None, None];
         if data[1] == 25 && dual {
             ears = [
@@ -100,6 +102,7 @@ pub fn parse(bytes: &[u8], address: u64, signal: i16, at: u64) -> Option<Reading
             charging,
             ears,
             lid: (!is_max(id) && (both_case || broadcaster_case)).then_some(data[8] & 8 == 0),
+            cased: dual_case && both_case,
             approximate: true,
         });
     }
@@ -109,6 +112,33 @@ pub fn parse(bytes: &[u8], address: u64, signal: i16, at: u64) -> Option<Reading
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn earbuds_in_the_case_are_reported_until_one_leaves() {
+        for (status, cased) in [(0x24, true), (0x04, true), (0x22, false), (0x62, false)] {
+            let mut frame = [0u8; 27];
+            frame[..9].copy_from_slice(&[7, 25, 1, 0x14, 0x20, status, 0x88, 0x08, 0]);
+            assert_eq!(
+                parse(&frame, 1, -50, 1000).unwrap().cased,
+                cased,
+                "{status:#x}"
+            );
+        }
+        for caseless in [0x200au16, 0x201f, 0x2003, 0x2005, 0x2006, 0x2009, 0x2010] {
+            let mut frame = [0u8; 27];
+            frame[..9].copy_from_slice(&[
+                7,
+                25,
+                1,
+                caseless as u8,
+                (caseless >> 8) as u8,
+                0x04,
+                0x88,
+                0x08,
+                0,
+            ]);
+            assert!(!parse(&frame, 1, -50, 1000).unwrap().cased, "{caseless:#x}");
+        }
+    }
     #[test]
     fn physical_battery_and_charging_sides_survive_primary_switches() {
         for id in [
