@@ -7,6 +7,9 @@ A quiet AirPods companion for Windows, written in Rust.
 - Levels at 20% or below turn orange when not charging.
 - Switching between the main view, Settings, and Devices no longer flickers.
 - Playback controls dim when nothing is playing, and the approximate mark sits quietly beside each number.
+- Automatic popups stay out of the way while a full-screen game, video, or presentation is running.
+- Lighter in the background: Near wakes about 45% less often, reads media information only while the flyout is open, and ignores repeated identical battery readings.
+- Bluetooth scanning shares the radio more politely with Wi-Fi and other Bluetooth devices.
 - The case-opening popup now appears reliably; most openings were previously missed.
 - Hovering the tray icon shows left, right, and case battery again.
 - Cleaner tray icon and flyout corners, with no dark pixels at the edges.
