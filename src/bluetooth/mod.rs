@@ -41,6 +41,11 @@ impl Scanner {
     pub fn start(tx: SyncSender<Event>) -> Result<Self> {
         let watcher = BluetoothLEAdvertisementWatcher::new()?;
         watcher.SetScanningMode(BluetoothLEScanningMode::Passive)?;
+        // Share the radio with Wi-Fi: Bluetooth and Wi-Fi are often one chip, and games feel
+        // scan time as ping spikes. Windows 11 24H2+; older versions keep the default.
+        if let Ok(coexist) = BluetoothLEAdvertisementScanParameters::CoexistenceOptimized() {
+            let _ = watcher.SetScanParameters(&coexist);
+        }
         // Let the Bluetooth stack drop everything except Apple proximity-pairing
         // broadcasts (type 0x07) before they wake this process.
         let prefix = DataWriter::new()?;
@@ -53,6 +58,11 @@ impl Scanner {
             .Advertisement()?
             .ManufacturerData()?
             .Append(&apple)?;
+        // Headphones repeat the same status several times a second, with a slightly different
+        // signal strength each time. Pass a reading on when its content changes, or every 2 s
+        // to keep the signal and "nearby" fresh; ear and lid changes still arrive at once.
+        let last: std::sync::Mutex<std::collections::HashMap<u64, (crate::model::Reading, u64)>> =
+            Default::default();
         let received = watcher.Received(&TypedEventHandler::new(
             move |_: windows::core::Ref<BluetoothLEAdvertisementWatcher>,
                   args: windows::core::Ref<BluetoothLEAdvertisementReceivedEventArgs>| {
@@ -78,7 +88,28 @@ impl Scanner {
                         args.RawSignalStrengthInDBm()?,
                         now(),
                     ) {
-                        let _ = tx.try_send(Event::Reading(reading));
+                        let fresh = last.lock().map_or(true, |mut seen| {
+                            let same = |old: &crate::model::Reading| {
+                                crate::model::Reading {
+                                    signal: reading.signal,
+                                    at: reading.at,
+                                    ..old.clone()
+                                } == reading
+                            };
+                            let repeat = seen.get(&reading.address).is_some_and(|(old, sent)| {
+                                same(old) && reading.at.saturating_sub(*sent) < 2_000
+                            });
+                            if !repeat {
+                                if seen.len() > 64 {
+                                    seen.clear();
+                                }
+                                seen.insert(reading.address, (reading.clone(), reading.at));
+                            }
+                            !repeat
+                        });
+                        if fresh {
+                            let _ = tx.try_send(Event::Reading(reading));
+                        }
                     }
                 }
                 Ok(())

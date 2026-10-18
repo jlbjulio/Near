@@ -63,7 +63,13 @@ pub fn run(
     // Lid openings wait here until a publish pass can show the popup.
     let mut opened = HashSet::new();
     loop {
-        let event = rx.recv_timeout(Duration::from_millis(300));
+        // Events wake the loop on their own; the timeout only drives expiries and labels.
+        // While nothing is shown or in progress, once a second is plenty.
+        let busy = connect_until != 0
+            || disconnect_until != 0
+            || connection_routes.is_some()
+            || crate::ui::visible();
+        let event = rx.recv_timeout(Duration::from_millis(if busy { 300 } else { 1_000 }));
         let t = now();
         let events = event.into_iter().chain(rx.try_iter().take(255));
         for event in events {
@@ -457,7 +463,8 @@ pub fn run(
             message.clear();
             message_until = 0;
         }
-        let media = if t >= next_media {
+        // Reading the media session is a cross-process call; only the open window shows it.
+        let media = if t >= next_media && crate::ui::visible() {
             next_media = t + 2_000;
             transport.read()
         } else {
@@ -517,10 +524,23 @@ pub fn run(
             available,
         };
         if let Ok(mut vm) = shared.lock() {
-            if *vm != next {
+            // Every advertisement refreshes the battery timestamps, which nothing shows; only
+            // a visible change wakes the UI thread.
+            if !same_but_time(&vm, &next) {
                 *vm = next;
                 crate::shell::notify(window);
             }
         }
     }
+}
+
+fn same_but_time(a: &ViewModel, b: &ViewModel) -> bool {
+    let strip = |v: &ViewModel| {
+        let mut v = v.clone();
+        for part in v.batteries.parts.iter_mut().flatten() {
+            part.at = 0;
+        }
+        v
+    };
+    a == b || strip(a) == strip(b)
 }

@@ -899,6 +899,12 @@ impl App {
         self.vm.preferences.motion && enabled.as_bool()
     }
     unsafe fn show(&mut self, automatic: bool) {
+        // A topmost popup over a full-screen game or presentation forces Windows to compose
+        // it, which costs the game frames. Windows holds its own notifications back then too.
+        if automatic && !IsWindowVisible(self.hwnd).as_bool() && quiet_time() {
+            return;
+        }
+        VISIBLE.store(true, std::sync::atomic::Ordering::Relaxed);
         self.automatic = automatic;
         self.dismiss_at = now() + 8000;
         if !automatic {
@@ -981,6 +987,7 @@ impl App {
         if !IsWindowVisible(self.hwnd).as_bool() {
             return;
         }
+        VISIBLE.store(false, std::sync::atomic::Ordering::Relaxed);
         self.automatic = false;
         let _ = KillTimer(Some(self.hwnd), 2);
         if self.animations_enabled() {
@@ -1593,4 +1600,24 @@ impl Drop for App {
             self.clear_fonts();
         }
     }
+}
+
+/// Whether the flyout is on screen, for the backend to skip work only it would show.
+static VISIBLE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+pub fn visible() -> bool {
+    VISIBLE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// True while a full-screen game, video or presentation is in front.
+fn quiet_time() -> bool {
+    use windows::Win32::UI::Shell::{
+        QUNS_BUSY, QUNS_PRESENTATION_MODE, QUNS_RUNNING_D3D_FULL_SCREEN,
+        SHQueryUserNotificationState,
+    };
+    unsafe { SHQueryUserNotificationState() }.is_ok_and(|state| {
+        state == QUNS_BUSY
+            || state == QUNS_RUNNING_D3D_FULL_SCREEN
+            || state == QUNS_PRESENTATION_MODE
+    })
 }
