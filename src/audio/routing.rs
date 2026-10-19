@@ -199,10 +199,17 @@ impl ConnectionRoutes {
         for (flow, devices) in [(eRender, outputs), (eCapture, inputs)] {
             for role in [eConsole, eMultimedia, eCommunications] {
                 if let Some(id) = routes.current(flow, role) {
-                    if devices
-                        .iter()
-                        .any(|e| e.id == id && e.state == 1 && !matches(e, paired))
-                    {
+                    // Media output is kept only on a mixer such as Sonar, so headphones connected
+                    // from Near play through it; on plain speakers the sound should move to the
+                    // headphones. Microphones and the communications output are always kept,
+                    // so calls do not switch the headphones to the low-quality hands-free
+                    // profile.
+                    if devices.iter().any(|e| {
+                        e.id == id
+                            && e.state == 1
+                            && !matches(e, paired)
+                            && (flow == eCapture || role == eCommunications || virtual_device(e))
+                    }) {
                         saved.push((flow, role, id));
                     }
                 }
@@ -448,6 +455,34 @@ mod tests {
             Some("speakers")
         );
         assert_eq!(routes.writes.len(), 1);
+    }
+    #[test]
+    fn connecting_from_plain_speakers_lets_the_sound_move_to_the_airpods() {
+        let (paired, outputs, inputs, mut routes) = fixture();
+        for role in [eConsole, eMultimedia, eCommunications] {
+            routes
+                .defaults
+                .insert((eRender.0, role.0), "speakers".into());
+            routes.defaults.insert((eCapture.0, role.0), "mic".into());
+        }
+        let mut saved = ConnectionRoutes::capture_with(&paired, &outputs, &inputs, &routes);
+        routes
+            .defaults
+            .insert((eRender.0, eConsole.0), "pods".into());
+        routes
+            .defaults
+            .insert((eCapture.0, eConsole.0), "pods-mic".into());
+        routes
+            .defaults
+            .insert((eRender.0, eCommunications.0), "pods".into());
+        saved.restore_with(&paired, &outputs, &inputs, &mut routes);
+        assert_eq!(routes.current(eRender, eConsole).as_deref(), Some("pods"));
+        assert_eq!(routes.current(eCapture, eConsole).as_deref(), Some("mic"));
+        assert_eq!(
+            routes.current(eRender, eCommunications).as_deref(),
+            Some("speakers")
+        );
+        assert_eq!(routes.writes.len(), 2);
     }
     #[test]
     fn connection_restores_sonar_only_when_windows_switched_to_airpods() {

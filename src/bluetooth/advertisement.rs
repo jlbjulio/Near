@@ -36,6 +36,13 @@ pub fn is_airpods(id: u16) -> bool {
             | 0x201B
     )
 }
+/// Models whose status byte reliably says both earbuds are in the case.
+pub fn has_case_layout(id: u16) -> bool {
+    matches!(
+        id,
+        0x2002 | 0x200F | 0x2013 | 0x200E | 0x2014 | 0x2024 | 0x2019 | 0x201B | 0x200B
+    )
+}
 pub fn is_max(id: u16) -> bool {
     matches!(id, 0x200A | 0x201F)
 }
@@ -71,10 +78,7 @@ pub fn parse(bytes: &[u8], address: u64, signal: i16, at: u64) -> Option<Reading
         let both_case = status & 4 != 0;
         let broadcaster_case = status & 0x40 != 0;
         let flip = !primary_left ^ broadcaster_case;
-        let dual = matches!(
-            id,
-            0x2002 | 0x200F | 0x2013 | 0x200E | 0x2014 | 0x2024 | 0x2019 | 0x201B | 0x200B
-        );
+        let dual = has_case_layout(id);
         let mut ears = [None, None];
         if data[1] == 25 && dual {
             ears = [
@@ -100,7 +104,7 @@ pub fn parse(bytes: &[u8], address: u64, signal: i16, at: u64) -> Option<Reading
             charging,
             ears,
             lid: (!is_max(id) && (both_case || broadcaster_case)).then_some(data[8] & 8 == 0),
-            // Only models with a verified status layout; others keep connecting on lid open.
+            // Only models with a verified status layout.
             cased: dual && both_case,
             approximate: true,
         });

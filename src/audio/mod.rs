@@ -103,6 +103,9 @@ pub fn request_disconnection(p: &Paired) -> windows::core::Result<()> {
 fn request_link(p: &Paired, disconnect: bool) -> windows::core::Result<()> {
     unsafe {
         let mut candidates: Vec<_> = outputs(9)?.into_iter().filter(|e| matches(e, p)).collect();
+        // Stereo first: asking the hands-free endpoint first can bring headphones up in the
+        // low-quality call profile on stacks that list both.
+        candidates.sort_by_key(|e| e.instance.to_ascii_uppercase().contains("BTHHFENUM"));
         if !disconnect && candidates.iter().any(|e| e.state == 1) {
             return Ok(());
         }

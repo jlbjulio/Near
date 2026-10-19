@@ -316,6 +316,18 @@ pub fn run(
                 .as_ref()
                 .is_some_and(|r| t.saturating_sub(r.at) < 5_000 && r.signal >= -75);
         let in_case = selection.reading.as_ref().is_some_and(|r| r.cased);
+        if let Some(p) = &chosen {
+            if let Some(r) = selection
+                .reading
+                .as_ref()
+                .filter(|r| t.saturating_sub(r.at) < 5_000)
+            {
+                auto_connect.sighted(p.address, r, advertisement::has_case_layout(r.model));
+            }
+            if p.model.is_none() {
+                auto_connect.link(p.address, p.available, t);
+            }
+        }
         let source = selection.reading;
         if let Some(r) = &source {
             last_source = Some(r.clone());
@@ -343,7 +355,8 @@ pub fn run(
             }
         }
         if let Some(p) = &chosen {
-            // Wait until an earbud leaves the case; opening the lid alone only shows battery.
+            // Only after the headphones are taken into use; opening the lid alone only shows
+            // battery.
             if scanner.is_some()
                 && auto_connect.ready(
                     p,
