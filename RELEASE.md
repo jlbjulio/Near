@@ -1,7 +1,9 @@
-## Near 1.0.12
+## Near 1.0.13
 
 A quiet AirPods companion for Windows, written in Rust.
 
+- The popup no longer appears out of nowhere while you wear your AirPods. A momentary hiccup reading Windows audio or Bluetooth devices used to look like a disconnect and reconnect.
+- The low battery alert now goes away after 4 seconds instead of 8.
 - Near connects your AirPods only when you take them into use near this PC, such as taking an earbud out of the case. It no longer pulls them back from your phone afterwards.
 - Someone else's AirPods of the same model across the room no longer trigger a connection.
 - When your PC plays through its own speakers, AirPods connected from Near now get the sound. SteelSeries Sonar and other mixers keep their routes, and calls stay off the low-quality hands-free mode.
@@ -37,7 +39,7 @@ A quiet AirPods companion for Windows, written in Rust.
 - A movable flyout that opens or focuses when you click the tray icon.
 - Consistent Segoe UI Variable typography on Windows 11, vector playback controls, and a simple English interface.
 
-Download **Near-1.0.12-windows-x64.zip**, extract it, and run **Near.exe**.
+Download **Near-1.0.13-windows-x64.zip**, extract it, and run **Near.exe**.
 
 **Compatibility:** Windows 10 version 2004 or later / Windows 11, x64, with Bluetooth LE. First-time pairing uses Windows Bluetooth settings. AirPods battery broadcasts are approximate, in 10% steps; case readings update while the case broadcasts. Ear sensing varies by model and firmware. AirPods Pro 3 and AirPods Max detection is included; their ear sensing is not advertised as supported. Real-device testing across every model is still outstanding.
 

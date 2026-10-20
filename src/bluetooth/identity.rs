@@ -3,12 +3,13 @@ use std::collections::HashMap;
 use windows::{
     Win32::{
         Devices::{Bluetooth::*, DeviceAndDriverInstallation::*},
-        Foundation::DEVPROPKEY,
+        Foundation::{DEVPROPKEY, ERROR_NO_MORE_ITEMS},
     },
     core::{GUID, PCWSTR},
 };
 
-pub fn catalog() -> Vec<Paired> {
+/// `None` when Windows could not be read, as opposed to nothing being paired.
+pub fn catalog() -> Option<Vec<Paired>> {
     unsafe {
         let search = BLUETOOTH_DEVICE_SEARCH_PARAMS {
             dwSize: std::mem::size_of::<BLUETOOTH_DEVICE_SEARCH_PARAMS>() as u32,
@@ -21,8 +22,10 @@ pub fn catalog() -> Vec<Paired> {
             dwSize: std::mem::size_of::<BLUETOOTH_DEVICE_INFO>() as u32,
             ..Default::default()
         };
-        let Ok(find) = BluetoothFindFirstDevice(&search, &mut info) else {
-            return vec![];
+        let find = match BluetoothFindFirstDevice(&search, &mut info) {
+            Ok(find) => find,
+            Err(e) if e.code() == ERROR_NO_MORE_ITEMS.to_hresult() => return Some(vec![]),
+            Err(_) => return None,
         };
         let metadata = metadata();
         let mut result = vec![];
@@ -72,7 +75,7 @@ pub fn catalog() -> Vec<Paired> {
             }
         }
         let _ = BluetoothFindDeviceClose(find);
-        result
+        Some(result)
     }
 }
 fn hex_address(id: &str) -> Option<u64> {

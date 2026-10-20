@@ -645,13 +645,15 @@ impl App {
         if self.vm.alert_revision != self.alert_revision {
             self.alert_revision = self.vm.alert_revision;
             if self.vm.preferences.low_battery && !self.vm.alert.is_empty() {
-                self.battery_notice_until = now() + 8000;
-                SetTimer(Some(self.hwnd), 3, 8000, None);
+                // One line to read; the case popup's 8 s felt like it would never leave.
+                self.battery_notice_until = now() + 4000;
+                SetTimer(Some(self.hwnd), 3, 4000, None);
                 if !IsWindowVisible(self.hwnd).as_bool() {
                     self.page = 0;
                     self.layout();
                     self.show(true);
-                } else if self.automatic {
+                }
+                if self.automatic {
                     self.dismiss_at = self.battery_notice_until;
                 }
             }

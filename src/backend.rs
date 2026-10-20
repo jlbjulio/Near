@@ -34,6 +34,7 @@ pub fn run(
     let mut alerts = crate::alerts::LowBattery::default();
     let mut paired = vec![];
     let mut endpoints = vec![];
+    let mut input_endpoints = vec![];
     let mut chosen: Option<Paired> = None;
     let mut last_source: Option<Reading> = None;
     let mut transport = Transport::default();
@@ -228,9 +229,17 @@ pub fn run(
                     5_000
                 };
             refresh = false;
-            paired = bluetooth::identity::catalog();
-            endpoints = audio::outputs(9).unwrap_or_default();
-            let input_endpoints = audio::inputs(9).unwrap_or_default();
+            // A failed read is not a disconnection: an empty list here showed the popup again
+            // on the next successful probe. Keep the last view until a read succeeds.
+            if let (Some(found), Ok(outputs), Ok(inputs)) = (
+                bluetooth::identity::catalog(),
+                audio::outputs(9),
+                audio::inputs(9),
+            ) {
+                paired = found;
+                endpoints = outputs;
+                input_endpoints = inputs;
+            }
             // Control-channel connections alone are not audio connections.
             for p in &mut paired {
                 p.connected = endpoints

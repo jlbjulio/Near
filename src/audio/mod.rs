@@ -62,9 +62,17 @@ fn endpoints(flow: EDataFlow, states: u32) -> windows::core::Result<Vec<Endpoint
         let devices = enumerator()?.EnumAudioEndpoints(flow, DEVICE_STATE(states))?;
         let mut list = vec![];
         for i in 0..devices.GetCount()?.min(64) {
-            let device = devices.Item(i)?;
-            let props = device.OpenPropertyStore(STGM_READ)?;
-            let id = device.GetId()?;
+            // A device removed mid-enumeration fails alone; it must not empty the whole list.
+            let Ok(device) = devices.Item(i) else {
+                continue;
+            };
+            let Ok(props) = device.OpenPropertyStore(STGM_READ) else {
+                continue;
+            };
+            let Ok(state) = device.GetState() else {
+                continue;
+            };
+            let Ok(id) = device.GetId() else { continue };
             let id_text = id.to_string().unwrap_or_default();
             CoTaskMemFree(Some(id.0.cast()));
             let container = props.GetValue(&CONTAINER).ok().and_then(|mut value| {
@@ -81,7 +89,7 @@ fn endpoints(flow: EDataFlow, states: u32) -> windows::core::Result<Vec<Endpoint
                 instance: string(&props, &INSTANCE),
                 container,
                 speakers,
-                state: device.GetState()?.0,
+                state: state.0,
             });
         }
         Ok(list)
